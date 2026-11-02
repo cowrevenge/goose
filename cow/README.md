@@ -27,7 +27,10 @@ ode-$v-win-x64;$env:Path"; node -v
 
 1. `Unblock-File .\cow\cow-goose.ps1` (only needed if the script came from a download)
 2. `.\cow\cow-goose.ps1 build` (UI only), or `.\cow\cow-goose.ps1 build -Backend` to also compile the
-   backend (`goose.exe`) from this checkout; needs rustup and the Visual Studio C++ build tools
+   backend (`goose.exe`) from this checkout. Same toolchain as upstream's Windows bundle
+   (`x86_64-pc-windows-msvc`): rustup, the Visual Studio C++ build tools, LLVM (libclang, for the
+   bundled llama.cpp bindings) and CMake. The script checks these first and prints the `winget`
+   command for anything missing.
 3. `.\cow\cow-goose.ps1 install` (backs up the current `C:\Goose` first)
 
 Goose.exe checks the hash of `resources\app.asar` (Electron asar integrity fuse), so the whole

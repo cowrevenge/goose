@@ -3,7 +3,8 @@
 #   .\cow\cow-goose.ps1 build -Backend  -> also compiles the backend (goose.exe) from this checkout
 #   .\cow\cow-goose.ps1 install   -> backs up C:\Goose to C:\Goose.bak-<timestamp>, then installs the build
 # Without -Backend the build reuses the backend binaries (resources\bin) of the installed Goose.
-# -Backend needs rustup (the repo's rust-toolchain.toml picks the version) and the Visual Studio C++ build tools.
+# -Backend builds the x86_64-pc-windows-msvc target like upstream; needs rustup, the Visual Studio C++ build
+# tools, LLVM (libclang) and CMake. The script checks all of them before building anything.
 # Settings, providers and sessions live in %APPDATA%\Block\goose and are not touched.
 param(
   [Parameter(Position = 0)][ValidateSet('build', 'install')][string]$Step = 'build',
@@ -23,6 +24,28 @@ if ($Step -eq 'build') {
   if (-not (Get-Command pnpm -ErrorAction SilentlyContinue)) { npm install -g pnpm@10 }
   if (-not (Test-Path "$Goose\resources\bin")) { throw "$Goose\resources\bin not found: the build reuses your installed backend" }
 
+  $target = 'x86_64-pc-windows-msvc'
+  if ($Backend) {
+    # Same toolchain as upstream's Windows bundle (.github/workflows/bundle-windows.yml). Checked before the
+    # UI build so a missing piece fails in seconds. llama-cpp-sys-2 needs libclang (bindgen) and CMake.
+    if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) { throw 'cargo not found. Install: winget install -e --id Rustlang.Rustup' }
+    $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+    $vc = if (Test-Path $vswhere) { & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath }
+    if (-not $vc) { throw 'MSVC C++ build tools not found. Install: winget install -e --id Microsoft.VisualStudio.2022.BuildTools --override "--quiet --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"' }
+    if (-not $env:LIBCLANG_PATH) {
+      $llvm = Join-Path $env:ProgramFiles 'LLVM\bin'
+      if (Test-Path (Join-Path $llvm 'libclang.dll')) { $env:LIBCLANG_PATH = $llvm } else { throw 'libclang not found. Install: winget install -e --id LLVM.LLVM' }
+    }
+    if (-not (Get-Command cmake -ErrorAction SilentlyContinue)) {
+      $cmakeBin = Join-Path $env:ProgramFiles 'CMake\bin'
+      if (Test-Path (Join-Path $cmakeBin 'cmake.exe')) { $env:Path = "$cmakeBin;$env:Path" } else { throw 'cmake not found. Install: winget install -e --id Kitware.CMake' }
+    }
+    # Inside the repo so it applies to the toolchain rust-toolchain.toml pins.
+    Push-Location $Src
+    try { rustup target add $target; if ($LASTEXITCODE) { throw "rustup target add $target failed" } } finally { Pop-Location }
+    "Backend prerequisites OK (MSVC, libclang at $env:LIBCLANG_PATH, cmake)"
+  }
+
   Push-Location (Join-Path $Src 'ui')
   try { pnpm install --frozen-lockfile; if ($LASTEXITCODE) { throw 'pnpm install failed' } } finally { Pop-Location }
   Push-Location $desktop
@@ -33,10 +56,9 @@ if ($Step -eq 'build') {
   Copy-Item "$Goose\resources\bin\*" "$out\resources\bin\" -Recurse -Force
 
   if ($Backend) {
-    if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) { throw 'cargo not found: install rustup (winget install -e --id Rustlang.Rustup) and the VS C++ build tools' }
     Push-Location $Src
-    try { cargo build --release -p goose-cli --bin goose; if ($LASTEXITCODE) { throw 'cargo build failed' } } finally { Pop-Location }
-    Copy-Item (Join-Path $Src 'target\release\goose.exe') "$out\resources\bin\goose.exe" -Force
+    try { cargo build --release --target $target -p goose-cli --bin goose; if ($LASTEXITCODE) { throw 'cargo build failed' } } finally { Pop-Location }
+    Copy-Item (Join-Path $Src "target\$target\release\goose.exe") "$out\resources\bin\goose.exe" -Force
     "Backend: goose.exe built from this checkout"
   }
 
