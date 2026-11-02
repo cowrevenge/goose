@@ -16,13 +16,12 @@ Local changes on top of an upstream Goose release, built and installed on Window
 Needs git, **Node 24** (what `ui/desktop/package.json` pins; Node 26 hangs the packager while it
 unpacks Electron) and pnpm 10 (the script installs pnpm if missing).
 
-Portable Node 24 for the build only, leaving the installed Node alone (run in the build window):
+The build finds Node 24 by itself: unpack a portable one under `C:\tools` (or pass `-NodeDir`) and
+`cow-goose.ps1 build` puts it first on PATH for that build only, leaving the installed Node alone.
+To fetch it once (nodejs.org rejects `irm`, so use `curl.exe`):
 
 ```powershell
-$v=(irm https://nodejs.org/dist/index.json | ? version -like 'v24.*' | select -First 1).version; irm "https://nodejs.org/dist/$v/node-$v-win-x64.zip" -OutFile "$env:TEMP
-ode24.zip"; Expand-Archive "$env:TEMP
-ode24.zip" C:	ools -Force; $env:Path="C:	ools
-ode-$v-win-x64;$env:Path"; node -v
+curl.exe -L -o "$env:TEMP\node24.zip" https://nodejs.org/dist/v24.22.2/node-v24.22.2-win-x64.zip; Expand-Archive "$env:TEMP\node24.zip" C:\tools -Force
 ```
 
 1. `Unblock-File .\cow\cow-goose.ps1` (only needed if the script came from a download)

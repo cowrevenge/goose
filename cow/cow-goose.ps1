@@ -3,6 +3,8 @@
 #   .\cow\cow-goose.ps1 build -Backend  -> also compiles the backend (goose.exe) from this checkout
 #   .\cow\cow-goose.ps1 install   -> backs up C:\Goose to C:\Goose.bak-<timestamp>, then installs the build
 # Without -Backend the build reuses the backend binaries (resources\bin) of the installed Goose.
+# The build needs Node 24. When the Node on PATH is another major, a portable Node 24 unpacked under
+# -NodeDir (C:\tools by default) is put first on PATH for this build only; nothing installed changes.
 # -Backend builds the x86_64-pc-windows-msvc target like upstream; needs rustup, the Visual Studio C++ build
 # tools, LLVM (libclang) and CMake. The script checks all of them before building anything.
 # Settings, providers and sessions live in %APPDATA%\Block\goose and are not touched.
@@ -10,6 +12,7 @@ param(
   [Parameter(Position = 0)][ValidateSet('build', 'install')][string]$Step = 'build',
   [string]$Src = (Split-Path $PSScriptRoot -Parent),
   [string]$Goose = 'C:\Goose',
+  [string]$NodeDir = 'C:\tools',
   [switch]$Backend
 )
 $ErrorActionPreference = 'Stop'
@@ -19,8 +22,23 @@ $out = Join-Path $desktop 'out\Goose-win32-x64'
 if ($Step -eq 'build') {
   # The desktop build pins Node 24 (ui/desktop/package.json engines). Newer majors can hang
   # electron-packager while it unpacks Electron, with no error.
-  $major = [int]((node -v).TrimStart('v').Split('.')[0])
-  if ($major -ne 24) { throw "Node 24 is needed for this build (found $(node -v)). See cow/README.md for a portable Node 24 that leaves your installed Node alone." }
+  function Get-NodeVersion { try { (node -v) } catch { '' } }
+  function Get-NodeMajor { $v = Get-NodeVersion; if ($v) { [int]($v.TrimStart('v').Split('.')[0]) } else { 0 } }
+  if ((Get-NodeMajor) -ne 24) {
+    # A portable Node 24 unpacked under $NodeDir, newest first. PATH is changed for this process only.
+    $portable = Get-ChildItem $NodeDir -Directory -Filter 'node-v24*-win-x64' -ErrorAction SilentlyContinue |
+                Sort-Object Name | Select-Object -Last 1
+    if ($portable) {
+      $env:Path = "$($portable.FullName);$env:Path"
+      "Using the portable Node at $($portable.FullName) for this build ($(Get-NodeVersion))"
+    }
+  }
+  if ((Get-NodeMajor) -ne 24) {
+    throw ("Node 24 is needed for this build (found '$(Get-NodeVersion)'), and no node-v24*-win-x64 folder is in $NodeDir. " +
+           "Unpack one there, then run this again:`n" +
+           "  curl.exe -L -o `"`$env:TEMP\node24.zip`" https://nodejs.org/dist/v24.22.2/node-v24.22.2-win-x64.zip`n" +
+           "  Expand-Archive `"`$env:TEMP\node24.zip`" $NodeDir -Force")
+  }
   if (-not (Get-Command pnpm -ErrorAction SilentlyContinue)) { npm install -g pnpm@10 }
   if (-not (Test-Path "$Goose\resources\bin")) { throw "$Goose\resources\bin not found: the build reuses your installed backend" }
 
