@@ -26,7 +26,8 @@ ode-$v-win-x64;$env:Path"; node -v
 ```
 
 1. `Unblock-File .\cow\cow-goose.ps1` (only needed if the script came from a download)
-2. `.\cow\cow-goose.ps1 build`
+2. `.\cow\cow-goose.ps1 build` (UI only), or `.\cow\cow-goose.ps1 build -Backend` to also compile the
+   backend (`goose.exe`) from this checkout; needs rustup and the Visual Studio C++ build tools
 3. `.\cow\cow-goose.ps1 install` (backs up the current `C:\Goose` first)
 
 Goose.exe checks the hash of `resources\app.asar` (Electron asar integrity fuse), so the whole
@@ -38,5 +39,6 @@ Set in `%APPDATA%\Block\goose\config\config.yaml`:
 
 - `GOOSE_AUTO_COMPACT_TOKEN_LIMIT: 524288` and `GOOSE_AUTO_COMPACT_THRESHOLD: 0.9`
   (Goose otherwise caps auto-compaction at a hardcoded 225k tokens).
-- `GOOSE_SHELL: powershell` (cmd truncates commands at the first newline).
+- `GOOSE_SHELL: pwsh` (PowerShell 7). `powershell` is Windows PowerShell 5.1, which has no `&&`/`||`;
+  cmd truncates commands at the first newline.
 - Per-model `context_limit` in `custom_providers/*.json`; `null` means Goose's 128k default.

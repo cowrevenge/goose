@@ -1,12 +1,15 @@
 # Builds Goose Desktop with the cow patches and installs it over C:\Goose (Windows).
 #   .\cow\cow-goose.ps1 build     -> builds ui\desktop\out\Goose-win32-x64 (C:\Goose untouched)
+#   .\cow\cow-goose.ps1 build -Backend  -> also compiles the backend (goose.exe) from this checkout
 #   .\cow\cow-goose.ps1 install   -> backs up C:\Goose to C:\Goose.bak-<timestamp>, then installs the build
-# The build reuses the backend binaries (resources\bin) of the installed Goose, so only the UI changes.
+# Without -Backend the build reuses the backend binaries (resources\bin) of the installed Goose.
+# -Backend needs rustup (the repo's rust-toolchain.toml picks the version) and the Visual Studio C++ build tools.
 # Settings, providers and sessions live in %APPDATA%\Block\goose and are not touched.
 param(
   [Parameter(Position = 0)][ValidateSet('build', 'install')][string]$Step = 'build',
   [string]$Src = (Split-Path $PSScriptRoot -Parent),
-  [string]$Goose = 'C:\Goose'
+  [string]$Goose = 'C:\Goose',
+  [switch]$Backend
 )
 $ErrorActionPreference = 'Stop'
 $desktop = Join-Path $Src 'ui\desktop'
@@ -28,6 +31,14 @@ if ($Step -eq 'build') {
 
   # Same backend as the installed Goose, laid over the build output (the source tree stays clean).
   Copy-Item "$Goose\resources\bin\*" "$out\resources\bin\" -Recurse -Force
+
+  if ($Backend) {
+    if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) { throw 'cargo not found: install rustup (winget install -e --id Rustlang.Rustup) and the VS C++ build tools' }
+    Push-Location $Src
+    try { cargo build --release -p goose-cli --bin goose; if ($LASTEXITCODE) { throw 'cargo build failed' } } finally { Pop-Location }
+    Copy-Item (Join-Path $Src 'target\release\goose.exe') "$out\resources\bin\goose.exe" -Force
+    "Backend: goose.exe built from this checkout"
+  }
 
   "BUILD OK: $out"
   "Next: .\cow\cow-goose.ps1 install"
