@@ -13,8 +13,10 @@ $desktop = Join-Path $Src 'ui\desktop'
 $out = Join-Path $desktop 'out\Goose-win32-x64'
 
 if ($Step -eq 'build') {
+  # The desktop build pins Node 24 (ui/desktop/package.json engines). Newer majors can hang
+  # electron-packager while it unpacks Electron, with no error.
   $major = [int]((node -v).TrimStart('v').Split('.')[0])
-  if ($major -lt 24) { throw "Node 24 or newer is needed (found $(node -v)). Install: winget install -e --id OpenJS.NodeJS.LTS" }
+  if ($major -ne 24) { throw "Node 24 is needed for this build (found $(node -v)). See cow/README.md for a portable Node 24 that leaves your installed Node alone." }
   if (-not (Get-Command pnpm -ErrorAction SilentlyContinue)) { npm install -g pnpm@10 }
   if (-not (Test-Path "$Goose\resources\bin")) { throw "$Goose\resources\bin not found: the build reuses your installed backend" }
 
