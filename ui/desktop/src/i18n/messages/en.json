@@ -4667,6 +4667,27 @@
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "Goose would like to call {toolName}. Allow?"
   },
+  "turnWork.failed": {
+    "defaultMessage": "{count} failed"
+  },
+  "turnWork.needsAttention": {
+    "defaultMessage": "Waiting for you"
+  },
+  "turnWork.noAnswer": {
+    "defaultMessage": "Ended without a final answer"
+  },
+  "turnWork.thought": {
+    "defaultMessage": "Thought for {duration}"
+  },
+  "turnWork.toolCalls": {
+    "defaultMessage": "{count,plural,one{# tool call} other{# tool calls}}"
+  },
+  "turnWork.worked": {
+    "defaultMessage": "Worked for {duration}"
+  },
+  "turnWork.working": {
+    "defaultMessage": "Working"
+  },
   "updateSection.autoDownload": {
     "defaultMessage": "Goose will download the update in the background and install it the next time you quit or restart."
   },

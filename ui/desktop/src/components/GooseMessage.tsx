@@ -38,6 +38,8 @@ interface GooseMessageProps {
   toolConfirmationShownInline: boolean;
   append: (value: string) => void;
   isStreaming: boolean;
+  /** The turn's work section shows this message's thinking instead (see TurnWorkSection). */
+  hideThinking?: boolean;
   submitElicitationResponse?: (
     elicitationId: string,
     userData: Record<string, unknown>
@@ -53,6 +55,7 @@ function GooseMessage({
   toolConfirmationShownInline,
   append,
   isStreaming,
+  hideThinking = false,
   submitElicitationResponse,
 }: GooseMessageProps) {
   const contentRef = useRef<HTMLDivElement | null>(null);
@@ -63,7 +66,8 @@ function GooseMessage({
   const { textContent, imagePaths: allImagePaths } = getTextAndImageContent(message);
   const displayText = isOutputTokenLimitFallback ? '' : textContent;
   const imagePaths = isOutputTokenLimitFallback ? [] : allImagePaths;
-  const thinkingContent = isOutputTokenLimitFallback ? null : getThinkingContent(message);
+  const thinkingContent =
+    isOutputTokenLimitFallback || hideThinking ? null : getThinkingContent(message);
 
   const timestamp = useMemo(() => formatMessageTimestamp(message.created), [message.created]);
   const toolRequests = getToolRequests(message);
