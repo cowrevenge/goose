@@ -73,6 +73,44 @@ fn developer_instructions() -> &'static str {
     }
 }
 
+/// Build the `shell` tool description for the shell dialect that will actually run.
+///
+/// Models on Windows keep emitting cmd.exe syntax (`& del`, `dir /b`, `findstr`,
+/// `2>NUL`) even when GOOSE_SHELL points at PowerShell, so each supported shell gets
+/// an explicit note on how to chain commands and which cmd-isms to avoid. Any other
+/// shell (bash, sh, ...) keeps the bare description.
+pub(crate) fn shell_tool_description(shell: &str) -> String {
+    let syntax_note = match shell {
+        "cmd" => {
+            " Commands must be on a single line — cmd.exe silently truncates at the \
+             first newline. Use `&` to chain (e.g. `echo a & echo b`) or set \
+             GOOSE_SHELL=powershell for multi-line support."
+        }
+        "pwsh" => {
+            " Commands run under PowerShell 7. Chain commands with `;` (`&&` and `||` also \
+             work). Do not write cmd.exe syntax: no `dir /b`, `findstr`, `type`, `more`, \
+             `del /f`, `2>NUL` or `%VAR%`. Use `Get-ChildItem -Name`, `Select-String`, \
+             `Get-Content`, `Remove-Item`, `2>$null`, `$env:VAR`. A lone `&` is the call \
+             operator, not a separator."
+        }
+        "powershell" => {
+            " Commands run under Windows PowerShell 5.1. Chain commands with `;` only \
+             (`&&` and `||` do not exist in 5.1). Do not write cmd.exe syntax: no \
+             `dir /b`, `findstr`, `type`, `more`, `del /f`, `2>NUL` or `%VAR%`. Use \
+             `Get-ChildItem -Name`, `Select-String`, `Get-Content`, `Remove-Item`, \
+             `2>$null`, `$env:VAR`. A lone `&` is the call operator, not a separator."
+        }
+        _ => "",
+    };
+    format!(
+        "Execute a shell command in the current dir. Commands run under `{shell}` \
+         (set GOOSE_SHELL to override) - write command strings in that shell's \
+         syntax.{syntax_note} Returns an object with stdout and stderr as separate \
+         fields. The output of each stream is limited to up to 2000 lines, and \
+         longer outputs will be saved to a temporary file.",
+    )
+}
+
 impl DeveloperClient {
     pub fn new() -> Result<Self> {
         let info = InitializeResult::new(ServerCapabilities::builder().enable_tools().build())
@@ -132,21 +170,7 @@ impl DeveloperClient {
                 Some(false),
             )),
             {
-                let shell = shell_display_name();
-                let newline_note = if shell == "cmd" {
-                    " Commands must be on a single line — cmd.exe silently truncates at the \
-                     first newline. Use `&` to chain (e.g. `echo a & echo b`) or set \
-                     GOOSE_SHELL=powershell for multi-line support."
-                } else {
-                    ""
-                };
-                let description = format!(
-                    "Execute a shell command in the current dir. Commands run under `{shell}` \
-                     (set GOOSE_SHELL to override) - write command strings in that shell's \
-                     syntax.{newline_note} Returns an object with stdout and stderr as separate \
-                     fields. The output of each stream is limited to up to 2000 lines, and \
-                     longer outputs will be saved to a temporary file.",
-                );
+                let description = shell_tool_description(&shell_display_name());
                 Tool::new("shell".to_string(), description, Self::schema::<ShellParams>())
             }
             .with_output_schema::<ShellOutput>()
@@ -389,5 +413,160 @@ mod tests {
         let observed = std::fs::canonicalize(first_text(&result)).unwrap();
         let expected = std::fs::canonicalize(&cwd).unwrap();
         assert_eq!(observed, expected);
+    }
+
+    const SHELL_DESC_HEAD: &str = "Execute a shell command in the current dir. Commands run under ";
+    const SHELL_DESC_TAIL: &str = "Returns an object with stdout and stderr as separate fields. \
+        The output of each stream is limited to up to 2000 lines, and longer outputs will be \
+        saved to a temporary file.";
+
+    #[test]
+    fn shell_description_pwsh_uses_powershell_syntax() {
+        let description = shell_tool_description("pwsh");
+
+        assert!(
+            description.contains("`pwsh`"),
+            "names the shell: {description}"
+        );
+        assert!(
+            description.contains("PowerShell 7"),
+            "names the shell: {description}"
+        );
+        assert!(
+            description.contains("Chain commands with `;`"),
+            "spells out chaining: {description}"
+        );
+        assert!(
+            description.contains("Do not write cmd.exe syntax"),
+            "bans cmd syntax: {description}"
+        );
+        assert!(
+            description.contains("2>$null"),
+            "gives the PS redirect: {description}"
+        );
+        assert!(
+            description.contains("`&&` and `||` also work"),
+            "PowerShell 7 has chain operators: {description}"
+        );
+
+        for cmdism in [
+            "dir /b", "findstr", "type", "more", "del /f", "2>NUL", "%VAR%",
+        ] {
+            assert!(
+                description.contains(cmdism),
+                "calls out the cmd-ism {cmdism}: {description}"
+            );
+        }
+        for alternative in [
+            "Get-ChildItem -Name",
+            "Select-String",
+            "Get-Content",
+            "Remove-Item",
+            "$env:VAR",
+        ] {
+            assert!(
+                description.contains(alternative),
+                "suggests the PowerShell equivalent {alternative}: {description}"
+            );
+        }
+    }
+
+    #[test]
+    fn shell_description_powershell_5_1_rejects_chain_operators() {
+        let description = shell_tool_description("powershell");
+
+        assert!(
+            description.contains("`powershell`"),
+            "names the shell: {description}"
+        );
+        assert!(
+            description.contains("Windows PowerShell 5.1"),
+            "names the shell: {description}"
+        );
+        assert!(
+            description.contains("Chain commands with `;`"),
+            "spells out chaining: {description}"
+        );
+        assert!(
+            description.contains("Do not write cmd.exe syntax"),
+            "bans cmd syntax: {description}"
+        );
+        assert!(
+            description.contains("2>$null"),
+            "gives the PS redirect: {description}"
+        );
+        assert!(
+            description.contains("`&&` and `||` do not exist in 5.1"),
+            "5.1 has no chain operators: {description}"
+        );
+        assert!(
+            !description.contains("`&&` and `||` also work"),
+            "5.1 must not advertise chain operators: {description}"
+        );
+    }
+
+    #[test]
+    fn shell_description_cmd_keeps_the_single_line_warning() {
+        let description = shell_tool_description("cmd");
+
+        assert!(
+            description.contains("`cmd`"),
+            "names the shell: {description}"
+        );
+        assert!(
+            description.starts_with(&format!("{SHELL_DESC_HEAD}`cmd` ")),
+            "keeps the leading text for cmd: {description}"
+        );
+        assert!(
+            description.ends_with(SHELL_DESC_TAIL),
+            "keeps the output-limit text for cmd: {description}"
+        );
+        assert!(
+            description.contains(
+                "Commands must be on a single line \u{2014} cmd.exe silently truncates at the first newline"
+            ),
+            "cmd keeps its single-line warning: {description}"
+        );
+        assert!(
+            description.contains(
+                "Use `&` to chain (e.g. `echo a & echo b`) or set GOOSE_SHELL=powershell for multi-line support."
+            ),
+            "cmd keeps its chaining hint: {description}"
+        );
+        assert!(
+            !description.contains("PowerShell 7"),
+            "cmd must not pick up the pwsh note: {description}"
+        );
+    }
+
+    #[test]
+    fn shell_description_other_shells_stay_bare() {
+        for shell in ["bash", "sh", "zsh", "fish"] {
+            let description = shell_tool_description(shell);
+
+            assert!(
+                description.starts_with(&format!("{SHELL_DESC_HEAD}`{shell}` ")),
+                "keeps the leading text for {shell}: {description}"
+            );
+            assert!(
+                description.ends_with(SHELL_DESC_TAIL),
+                "keeps the output-limit text for {shell}: {description}"
+            );
+            assert!(
+                !description.contains("PowerShell"),
+                "{shell} must not get PowerShell text: {description}"
+            );
+            assert!(
+                !description.contains("cmd.exe"),
+                "{shell} must not get cmd.exe text: {description}"
+            );
+            assert_eq!(
+                description,
+                format!(
+                    "{SHELL_DESC_HEAD}`{shell}` (set GOOSE_SHELL to override) - write command strings in that shell's syntax. {SHELL_DESC_TAIL}"
+                ),
+                "unrecognised shells must keep the exact legacy description"
+            );
+        }
     }
 }
