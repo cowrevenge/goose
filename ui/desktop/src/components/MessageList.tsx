@@ -3,6 +3,8 @@ import { isEqual } from 'lodash';
 import { defineMessages, useIntl } from '../i18n';
 import GooseMessage from './GooseMessage';
 import UserMessage from './UserMessage';
+import ThinkingContent from './ThinkingContent';
+import TurnWorkSection from './TurnWorkSection';
 import {
   SystemNotificationInline,
   getInlineSystemNotification,
@@ -11,12 +13,14 @@ import {
   CreditsExhaustedNotification,
   getCreditsExhaustedNotification,
 } from './context_management/CreditsExhaustedNotification';
-import type {
-  ImageData,
-  Message,
-  NotificationEvent,
-  SystemNotificationContent,
+import {
+  getPendingToolConfirmationIds,
+  type ImageData,
+  type Message,
+  type NotificationEvent,
+  type SystemNotificationContent,
 } from '../types/message';
+import { groupIntoTurns, type DisplayedEntry } from '../utils/turnGrouping';
 import { getModelDisplayName } from './settings/models/predefinedModelsUtils';
 import {
   deriveMessageRowContexts,
@@ -71,6 +75,7 @@ interface MessageRowProps {
   index: number;
   isStreaming: boolean;
   isUser: boolean;
+  hideThinking?: boolean;
   message: Message;
   modelChangeMessage: string | null;
   onMessageUpdate?: (
@@ -93,6 +98,7 @@ function MessageRowComponent({
   index,
   isStreaming,
   isUser,
+  hideThinking,
   message,
   modelChangeMessage,
   onMessageUpdate,
@@ -144,6 +150,7 @@ function MessageRowComponent({
             toolConfirmationShownInline={rowContext.toolConfirmationShownInline}
             append={append}
             isStreaming={isStreaming}
+            hideThinking={hideThinking}
             submitElicitationResponse={submitElicitationResponse}
           />
         )}
@@ -234,31 +241,28 @@ export default function MessageList({
   }, [hasHiddenMessages]);
 
   const rowContexts = useMemo(() => deriveMessageRowContexts(messages), [messages]);
+  const pendingConfirmationIds = useMemo(() => getPendingToolConfirmationIds(messages), [messages]);
   const modelLabel = (model: InferenceModel) =>
     model.confirmed
       ? getModelDisplayName(model.id)
       : intl.formatMessage(i18n.requestedModel, { model: getModelDisplayName(model.id) });
-  const messageRows: React.ReactNode[] = [];
 
-  displayedMessages.forEach(({ message, index }, displayedIndex) => {
-    if (hiddenMessageCount > 0 && displayedIndex === HEAD_MESSAGE_COUNT) {
-      messageRows.push(
-        <div
-          key="hidden-messages"
-          className="my-6 flex items-center justify-center gap-2 text-xs text-text-secondary"
-        >
-          <span>{intl.formatMessage(i18n.hiddenMessages, { count: hiddenMessageCount })}</span>
-          <button
-            type="button"
-            className="underline underline-offset-2 hover:text-text-primary"
-            onClick={() => setShowAllMessages(true)}
-          >
-            {intl.formatMessage(i18n.showAllMessages)}
-          </button>
-        </div>
-      );
-    }
+  // One agent turn spans many messages (assistant turns and tool-result messages); group them so
+  // the work collapses and only the final answer stays in view.
+  const groups = useMemo(
+    () =>
+      groupIntoTurns(displayedMessages, {
+        isUserMessage,
+        isNotification: (message) => getSystemNotification(message) !== undefined,
+        rowContexts,
+        pendingConfirmationIds,
+        breakBefore: hiddenMessageCount > 0 ? new Set([HEAD_MESSAGE_COUNT]) : undefined,
+      }),
+    [displayedMessages, isUserMessage, rowContexts, pendingConfirmationIds, hiddenMessageCount]
+  );
+  const lastMessageIndex = messages.length - 1;
 
+  const renderRow = ({ message, index }: DisplayedEntry, hideThinking = false) => {
     const isUser = isUserMessage(message);
     const messageIdentifier = message.id ?? `msg-${index}-${message.created}`;
     const messageKey = getSystemNotification(message)
@@ -278,7 +282,7 @@ export default function MessageList({
       toolCallNotifications.get(toolState.requestId)
     );
 
-    messageRows.push(
+    return (
       <MessageRow
         key={messageKey}
         append={append}
@@ -286,10 +290,11 @@ export default function MessageList({
         isStreaming={
           isStreamingMessage &&
           !isUser &&
-          index === messages.length - 1 &&
+          index === lastMessageIndex &&
           message.role === 'assistant'
         }
         isUser={isUser}
+        hideThinking={hideThinking}
         message={message}
         modelChangeMessage={modelChangeMessage}
         onMessageUpdate={onMessageUpdate}
@@ -299,7 +304,67 @@ export default function MessageList({
         toolNotifications={toolNotifications}
       />
     );
-  });
+  };
+
+  const messageRows: React.ReactNode[] = [];
+  let hiddenMarkerAdded = false;
+  const addHiddenMarker = () => {
+    hiddenMarkerAdded = true;
+    messageRows.push(
+      <div
+        key="hidden-messages"
+        className="my-6 flex items-center justify-center gap-2 text-xs text-text-secondary"
+      >
+        <span>{intl.formatMessage(i18n.hiddenMessages, { count: hiddenMessageCount })}</span>
+        <button
+          type="button"
+          className="underline underline-offset-2 hover:text-text-primary"
+          onClick={() => setShowAllMessages(true)}
+        >
+          {intl.formatMessage(i18n.showAllMessages)}
+        </button>
+      </div>
+    );
+  };
+  const firstTailIndex =
+    hiddenMessageCount > 0 ? displayedMessages[HEAD_MESSAGE_COUNT]?.index : undefined;
+
+  for (const group of groups) {
+    const firstIndex =
+      group.kind === 'single' ? group.entry.index : (group.work[0] ?? group.final)!.index;
+    if (!hiddenMarkerAdded && firstTailIndex !== undefined && firstIndex >= firstTailIndex) {
+      addHiddenMarker();
+    }
+
+    if (group.kind === 'single') {
+      messageRows.push(renderRow(group.entry));
+      continue;
+    }
+
+    const turnEntries = group.final ? [...group.work, group.final] : group.work;
+    const turnIsStreaming =
+      isStreamingMessage && turnEntries[turnEntries.length - 1].index === lastMessageIndex;
+
+    messageRows.push(
+      <div key={group.key} className="relative mt-4 assistant">
+        <TurnWorkSection
+          stats={group.stats}
+          isStreaming={turnIsStreaming}
+          hasFinal={group.final !== null}
+        >
+          {group.work.map((entry) => renderRow(entry))}
+          {group.finalThinking && (
+            <div className="mt-4">
+              <ThinkingContent content={group.finalThinking} isExpanded={false} />
+            </div>
+          )}
+        </TurnWorkSection>
+      </div>
+    );
+    if (group.final) {
+      messageRows.push(renderRow(group.final, true));
+    }
+  }
 
   return <>{messageRows}</>;
 }

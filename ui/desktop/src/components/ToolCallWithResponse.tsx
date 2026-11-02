@@ -20,6 +20,7 @@ import type { ContentBlock } from '../types/message';
 
 import McpAppRenderer from './McpApps/McpAppRenderer';
 import ToolApprovalButtons from './ToolApprovalButtons';
+import { useStepsStartCollapsed } from './turnWorkContext';
 import { defineMessages, useIntl } from '../i18n';
 
 type LoadingStatus = 'loading' | 'success' | 'error';
@@ -506,6 +507,7 @@ function ToolCallView({
   isStreamingMessage = false,
 }: ToolCallViewProps) {
   const intl = useIntl();
+  const startCollapsed = useStepsStartCollapsed();
   const [responseStyle, setResponseStyle] = useState<string>('concise');
 
   useEffect(() => {
@@ -524,6 +526,7 @@ function ToolCallView({
   }, []);
 
   const isExpandToolDetails = (() => {
+    if (startCollapsed) return false;
     switch (responseStyle) {
       case 'concise':
         return false;
@@ -804,7 +807,7 @@ function ToolCallView({
   );
   return (
     <ToolCallExpandable
-      isStartExpanded={isRenderingActivity || isExpandToolDetails}
+      isStartExpanded={!startCollapsed && (isRenderingActivity || isExpandToolDetails)}
       isForceExpand={false}
       label={
         extensionTooltip ? (
@@ -853,7 +856,10 @@ function ToolCallView({
             logs={logs}
             working={loadingStatus === 'loading'}
             isStartExpanded={
-              loadingStatus === 'loading' || responseStyle === 'detailed' || responseStyle === null
+              !startCollapsed &&
+              (loadingStatus === 'loading' ||
+                responseStyle === 'detailed' ||
+                responseStyle === null)
             }
           />
         </div>

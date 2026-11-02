@@ -360,3 +360,25 @@ describe('MessageList transcript window', () => {
     expect(screen.queryByText('Model changed: old-model → new-model')).toBeNull();
   });
 });
+
+describe('MessageList turn grouping', () => {
+  it('collapses the work of a turn behind a summary and keeps the answer in view', () => {
+    const transcript: Message[] = [
+      message('u1', 'user', [{ type: 'text', text: 'Check the DB' }]),
+      { ...message('a1', 'assistant', [toolRequest('t1')]), created: 10 },
+      message('r1', 'user', [toolResponse('t1')]),
+      { ...message('a2', 'assistant', [{ type: 'text', text: 'Found it.' }]), created: 45 },
+    ];
+
+    const { container } = renderList(transcript);
+
+    const trigger = screen.getByRole('button', { name: /Worked for 35s · 1 tool call/ });
+    const content = container.querySelector('.turn-work [data-slot="collapsible-content"]');
+    expect(content?.getAttribute('data-state')).toBe('closed');
+    expect(content?.textContent).toContain('a1');
+    expect(screen.getByText('a2').closest('.turn-work')).toBeNull();
+
+    act(() => trigger.click());
+    expect(content?.getAttribute('data-state')).toBe('open');
+  });
+});
