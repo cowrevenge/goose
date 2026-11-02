@@ -1,0 +1,43 @@
+# Builds Goose Desktop with the cow patches and installs it over C:\Goose (Windows).
+#   .\cow\cow-goose.ps1 build     -> builds ui\desktop\out\Goose-win32-x64 (C:\Goose untouched)
+#   .\cow\cow-goose.ps1 install   -> backs up C:\Goose to C:\Goose.bak-<timestamp>, then installs the build
+# The build reuses the backend binaries (resources\bin) of the installed Goose, so only the UI changes.
+# Settings, providers and sessions live in %APPDATA%\Block\goose and are not touched.
+param(
+  [Parameter(Position = 0)][ValidateSet('build', 'install')][string]$Step = 'build',
+  [string]$Src = (Split-Path $PSScriptRoot -Parent),
+  [string]$Goose = 'C:\Goose'
+)
+$ErrorActionPreference = 'Stop'
+$desktop = Join-Path $Src 'ui\desktop'
+$out = Join-Path $desktop 'out\Goose-win32-x64'
+
+if ($Step -eq 'build') {
+  $major = [int]((node -v).TrimStart('v').Split('.')[0])
+  if ($major -lt 24) { throw "Node 24 or newer is needed (found $(node -v)). Install: winget install -e --id OpenJS.NodeJS.LTS" }
+  if (-not (Get-Command pnpm -ErrorAction SilentlyContinue)) { npm install -g pnpm@10 }
+  if (-not (Test-Path "$Goose\resources\bin")) { throw "$Goose\resources\bin not found: the build reuses your installed backend" }
+
+  Push-Location (Join-Path $Src 'ui')
+  try { pnpm install --frozen-lockfile; if ($LASTEXITCODE) { throw 'pnpm install failed' } } finally { Pop-Location }
+  Push-Location $desktop
+  try { pnpm run package; if ($LASTEXITCODE) { throw 'pnpm run package failed' } } finally { Pop-Location }
+  if (-not (Test-Path "$out\Goose.exe")) { throw "build finished but $out\Goose.exe is missing" }
+
+  # Same backend as the installed Goose, laid over the build output (the source tree stays clean).
+  Copy-Item "$Goose\resources\bin\*" "$out\resources\bin\" -Recurse -Force
+
+  "BUILD OK: $out"
+  "Next: .\cow\cow-goose.ps1 install"
+}
+
+if ($Step -eq 'install') {
+  if (-not (Test-Path "$out\Goose.exe")) { throw "No build at $out. Run .\cow\cow-goose.ps1 build first." }
+  Get-Process goose*, Goose* -ErrorAction SilentlyContinue | Stop-Process -Force
+  Start-Sleep 2
+  $bak = "$Goose.bak-" + (Get-Date -Format 'yyyyMMdd-HHmmss')
+  if (Test-Path $Goose) { Move-Item $Goose $bak; "Backup: $bak" }
+  Copy-Item $out $Goose -Recurse
+  "INSTALLED: $Goose  (version $((Get-Item "$Goose\Goose.exe").VersionInfo.ProductVersion))"
+  "Undo: Remove-Item $Goose -Recurse -Force; Move-Item $bak $Goose"
+}
