@@ -39,21 +39,9 @@ pub struct DeveloperClient {
     image_tool: Arc<ImageTool>,
 }
 
-fn developer_instructions() -> &'static str {
+fn developer_instructions() -> String {
     if cfg!(windows) {
-        indoc! {"
-            Use the developer extension to build software and operate a terminal.
-
-            Make sure to use the tools *efficiently* - reading all the content you need in as few
-            iterations as possible and then making the requested edits or running commands. You are
-            responsible for managing your context window, and to minimize unnecessary turns which
-            cost the user money.
-
-            For editing software, prefer the flow of using tree to understand the codebase structure
-            and file sizes. When you need to search, prefer findstr or Select-String (via shell).
-            Then use type or Get-Content to gather the context you need, always reading before
-            editing. Use write and edit to efficiently make changes. Test and verify as appropriate.
-        "}
+        windows_developer_instructions(&shell_display_name())
     } else {
         indoc! {"
             Use the developer extension to build software and operate a terminal.
@@ -70,7 +58,39 @@ fn developer_instructions() -> &'static str {
 
             When running Python scripts or commands, always use `python3` instead of `python`.
         "}
+        .to_string()
     }
+}
+
+/// The Windows half of the instructions, phrased for the shell the `shell` tool
+/// will actually run.
+///
+/// This used to hard-code cmd.exe's `findstr` and `type`, so with
+/// GOOSE_SHELL=powershell the model was told to reach for two commands that do not
+/// exist there. Only those two phrases vary; the cmd wording is unchanged.
+fn windows_developer_instructions(shell: &str) -> String {
+    let (search_hint, read_hint) = match shell {
+        "pwsh" | "powershell" => ("prefer Select-String (via shell)", "use Get-Content"),
+        _ => (
+            "prefer findstr or Select-String (via shell)",
+            "use type or Get-Content",
+        ),
+    };
+    indoc! {"
+        Use the developer extension to build software and operate a terminal.
+
+        Make sure to use the tools *efficiently* - reading all the content you need in as few
+        iterations as possible and then making the requested edits or running commands. You are
+        responsible for managing your context window, and to minimize unnecessary turns which
+        cost the user money.
+
+        For editing software, prefer the flow of using tree to understand the codebase structure
+        and file sizes. When you need to search, {search_hint}.
+        Then {read_hint} to gather the context you need, always reading before
+        editing. Use write and edit to efficiently make changes. Test and verify as appropriate.
+    "}
+    .replace("{search_hint}", search_hint)
+    .replace("{read_hint}", read_hint)
 }
 
 /// Build the `shell` tool description for the shell dialect that will actually run.
@@ -566,6 +586,44 @@ mod tests {
                     "{SHELL_DESC_HEAD}`{shell}` (set GOOSE_SHELL to override) - write command strings in that shell's syntax. {SHELL_DESC_TAIL}"
                 ),
                 "unrecognised shells must keep the exact legacy description"
+            );
+        }
+    }
+
+    #[test]
+    fn windows_instructions_match_the_configured_shell() {
+        let cmd = windows_developer_instructions("cmd");
+        assert!(
+            cmd.contains("When you need to search, prefer findstr or Select-String (via shell)."),
+            "cmd must keep findstr: {cmd}"
+        );
+        assert!(
+            cmd.contains("Then use type or Get-Content to gather the context you need"),
+            "cmd must keep type: {cmd}"
+        );
+
+        for shell in ["pwsh", "powershell"] {
+            let instructions = windows_developer_instructions(shell);
+
+            assert!(
+                instructions.contains("When you need to search, prefer Select-String (via shell)."),
+                "{shell} must recommend Select-String: {instructions}"
+            );
+            assert!(
+                instructions.contains("Then use Get-Content to gather the context you need"),
+                "{shell} must recommend Get-Content: {instructions}"
+            );
+            assert!(
+                !instructions.contains("findstr"),
+                "{shell} must not recommend findstr: {instructions}"
+            );
+            assert!(
+                !instructions.contains("type or"),
+                "{shell} must not recommend the cmd type builtin: {instructions}"
+            );
+            assert!(
+                instructions.contains("prefer the flow of using tree"),
+                "shell-independent guidance must survive for {shell}: {instructions}"
             );
         }
     }
