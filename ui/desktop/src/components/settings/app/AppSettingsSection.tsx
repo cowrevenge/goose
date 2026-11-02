@@ -48,6 +48,12 @@ const i18n = defineMessages({
     id: 'settings.menuBarIcon.description',
     defaultMessage: 'Show goose in the menu bar',
   },
+  closeToTray: { id: 'settings.closeToTray.title', defaultMessage: 'Close to tray' },
+  closeToTrayDesc: {
+    id: 'settings.closeToTray.description',
+    defaultMessage:
+      'Closing the window keeps goose running in the tray, including any task in progress. Quit from the tray icon.',
+  },
   dockIcon: { id: 'settings.dockIcon.title', defaultMessage: 'Dock icon' },
   dockIconDesc: { id: 'settings.dockIcon.description', defaultMessage: 'Show goose in the dock' },
   preventSleep: { id: 'settings.preventSleep.title', defaultMessage: 'Prevent Sleep' },
@@ -180,6 +186,7 @@ interface AppSettingsSectionProps {
 
 export default function AppSettingsSection({ scrollToSection }: AppSettingsSectionProps) {
   const [menuBarIconEnabled, setMenuBarIconEnabled] = useState(true);
+  const [closeToTray, setCloseToTray] = useState(true);
   const [dockIconEnabled, setDockIconEnabled] = useState(true);
   const [wakelockEnabled, setWakelockEnabled] = useState(true);
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
@@ -214,6 +221,7 @@ export default function AppSettingsSection({ scrollToSection }: AppSettingsSecti
 
   useEffect(() => {
     window.electron.getSetting('showPricing').then(setShowPricing);
+    window.electron.getSetting('closeToTray').then((value) => setCloseToTray(value ?? true));
     window.electron.getSetting('language').then((value) => setLanguage(value ?? 'system'));
   }, []);
 
@@ -408,6 +416,29 @@ export default function AppSettingsSection({ scrollToSection }: AppSettingsSecti
               />
             </div>
           </div>
+
+          {!isMacOS && menuBarIconEnabled && (
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-text-primary text-xs">
+                  {intl.formatMessage(i18n.closeToTray)}
+                </h3>
+                <p className="text-xs text-text-secondary max-w-md mt-[2px]">
+                  {intl.formatMessage(i18n.closeToTrayDesc)}
+                </p>
+              </div>
+              <div className="flex items-center">
+                <Switch
+                  checked={closeToTray}
+                  onCheckedChange={async (checked) => {
+                    setCloseToTray(checked);
+                    await window.electron.setSetting('closeToTray', checked);
+                  }}
+                  variant="mono"
+                />
+              </div>
+            </div>
+          )}
 
           {isMacOS && (
             <div className="flex items-center justify-between">

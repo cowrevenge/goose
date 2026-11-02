@@ -37,6 +37,8 @@ export type LanguageSetting =
 export interface Settings {
   // Desktop app settings
   showMenuBarIcon: boolean;
+  /** Closing the last window hides it to the tray instead of quitting (Windows and Linux). */
+  closeToTray: boolean;
   disableAutoDownload: boolean;
   showDockIcon: boolean;
   enableWakelock: boolean;
@@ -76,6 +78,7 @@ export const defaultKeyboardShortcuts: DefaultKeyboardShortcuts = {
 export const defaultSettings: Settings = {
   // Desktop app settings
   showMenuBarIcon: true,
+  closeToTray: true,
   disableAutoDownload: false,
   showDockIcon: true,
   enableWakelock: false,
