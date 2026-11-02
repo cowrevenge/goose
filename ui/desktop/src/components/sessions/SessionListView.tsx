@@ -35,7 +35,6 @@ import {
   DropdownMenuTrigger,
 } from '../ui/dropdown-menu';
 import {
-  acpDeleteSession,
   acpExportSession,
   acpForkSession,
   acpImportSession,
@@ -44,9 +43,7 @@ import {
   type SessionListItem,
 } from '../../acp/sessions';
 import type { SessionExportFormat } from '@aaif/goose-acp-client';
-import { acpChatSessionActions } from '../../acp/chatSessionStore';
-import { cancelAcpPermissionRequestsForSession } from '../../acp/permissionRequests';
-import { cancelAcpElicitationRequestsForSession } from '../../acp/elicitationRequests';
+import { deleteSessionWithCleanup } from '../../acp/deleteSessionWithCleanup';
 import { getSearchShortcutText } from '../../utils/keyboardShortcuts';
 
 const i18n = defineMessages({
@@ -554,14 +551,8 @@ const SessionListView: React.FC<SessionListViewProps> = React.memo(({ onSelectSe
     setSessionToDelete(null);
 
     try {
-      await acpDeleteSession(sessionToDeleteId);
+      await deleteSessionWithCleanup(sessionToDeleteId);
       toast.success(intl.formatMessage(i18n.deleteSuccess));
-      window.dispatchEvent(
-        new CustomEvent(AppEvents.SESSION_DELETED, { detail: { sessionId: sessionToDeleteId } })
-      );
-      cancelAcpPermissionRequestsForSession(sessionToDeleteId);
-      cancelAcpElicitationRequestsForSession(sessionToDeleteId);
-      acpChatSessionActions.deleteSnapshot(sessionToDeleteId);
     } catch (error) {
       console.error('Error deleting session:', error);
       toast.error(
