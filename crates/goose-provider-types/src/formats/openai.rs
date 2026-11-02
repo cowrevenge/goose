@@ -171,6 +171,9 @@ struct StreamingChunk {
     id: Option<String>,
     usage: Option<Value>,
     model: Option<String>,
+    /// Strata: `<tool_call>` blocks for tools the request did not declare, which it returned as text.
+    #[serde(default)]
+    strata_rejected_tool_calls: Option<Value>,
 }
 
 fn extract_content_and_signature(
@@ -739,6 +742,38 @@ pub fn record_response_metadata(usage: &mut ProviderUsage, response: &Value) {
 }
 
 /// Convert OpenAI's API response to internal Message format
+/// Strata (and servers like it) return a `<tool_call>` for a tool the request did not declare as plain
+/// text and list it in `strata_rejected_tool_calls`. Left as text, the turn reads as a final answer and the
+/// agent stops; surfaced as a failed tool request, the model gets the error back and retries.
+fn rejected_tool_call_errors(
+    rejected: Option<&Value>,
+    id_prefix: &str,
+) -> Vec<MessageContentBlock> {
+    let Some(entries) = rejected.and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    entries
+        .iter()
+        .enumerate()
+        .map(|(i, entry)| {
+            let name = entry
+                .get("name")
+                .and_then(Value::as_str)
+                .filter(|n| !n.is_empty())
+                .unwrap_or("<unnamed>");
+            let error = ErrorData {
+                code: ErrorCode::INVALID_REQUEST,
+                message: Cow::from(format!(
+                    "There is no tool named '{name}', so nothing ran: the call came back as plain text. \
+                     Call one of the tools you were given, using its exact name."
+                )),
+                data: None,
+            };
+            MessageContentBlock::tool_request(format!("{id_prefix}_rejected_{i}"), Err(error))
+        })
+        .collect()
+}
+
 pub fn response_to_message(response: &Value) -> anyhow::Result<Message> {
     let output_token_limit_reached = response
         .pointer("/choices/0/finish_reason")
@@ -898,6 +933,15 @@ pub fn response_to_message(response: &Value) -> anyhow::Result<Message> {
             }
         }
     }
+
+    let id_prefix = response
+        .get("id")
+        .and_then(Value::as_str)
+        .unwrap_or("strata");
+    content.extend(rejected_tool_call_errors(
+        response.get("strata_rejected_tool_calls"),
+        id_prefix,
+    ));
 
     let mut message = Message::new(Role::Assistant, chrono::Utc::now().timestamp(), content);
     message.metadata.output_token_limit_reached = output_token_limit_reached;
@@ -1289,6 +1333,7 @@ where
         let mut output_token_limit_reached = false;
         let mut output_token_limit_metadata_emitted = false;
         let mut usage_emitted = false;
+        let mut rejected_tool_calls: Vec<Value> = Vec::new();
 
         'outer: while let Some(response) = stream.next().await {
             let response_str = response?;
@@ -1312,6 +1357,9 @@ where
             }
             if let Some(id) = &chunk.id {
                 last_response_id = Some(id.clone());
+            }
+            if let Some(Value::Array(entries)) = &chunk.strata_rejected_tool_calls {
+                rejected_tool_calls.extend(entries.iter().cloned());
             }
 
             if !chunk.choices.is_empty() {
@@ -1382,6 +1430,9 @@ where
                                 }
                                 if let Some(id) = &tool_chunk.id {
                                     last_response_id = Some(id.clone());
+                                }
+                                if let Some(Value::Array(entries)) = &tool_chunk.strata_rejected_tool_calls {
+                                    rejected_tool_calls.extend(entries.iter().cloned());
                                 }
                                 if let Some(reason) = tool_chunk.choices.first().and_then(|c| c.finish_reason.clone()) {
                                     last_finish_reason = Some(reason);
@@ -1675,6 +1726,20 @@ where
                 output_token_limit_reached && !output_token_limit_metadata_emitted;
             output_token_limit_metadata_emitted |= message.metadata.output_token_limit_reached;
 
+            yield (Some(message), None)
+        }
+
+        if !rejected_tool_calls.is_empty() {
+            let rejected = Value::Array(std::mem::take(&mut rejected_tool_calls));
+            let id_prefix = last_response_id.clone().unwrap_or_else(|| "strata".to_string());
+            let mut message = Message::new(
+                Role::Assistant,
+                chrono::Utc::now().timestamp(),
+                rejected_tool_call_errors(Some(&rejected), &id_prefix),
+            );
+            if let Some(id) = last_response_id.clone() {
+                message = message.with_id(id);
+            }
             yield (Some(message), None)
         }
 
@@ -3721,6 +3786,71 @@ mod tests {
             }
         }
         requests
+    }
+
+    fn assert_rejected_tool_error(request: &crate::conversation::message::ToolRequest, name: &str) {
+        match &request.tool_call {
+            Err(ErrorData {
+                code: ErrorCode::INVALID_REQUEST,
+                message,
+                ..
+            }) => {
+                assert!(
+                    message.contains(&format!("no tool named '{name}'")),
+                    "{message}"
+                );
+            }
+            other => panic!("expected an invalid-request error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_response_to_message_surfaces_strata_rejected_tool_calls() -> anyhow::Result<()> {
+        let response = json!({
+            "id": "chatcmpl-rej",
+            "choices": [{"index": 0, "finish_reason": "stop", "message": {"role": "assistant",
+                "content": "<tool_call>\n<function=shell__dummy>\n<parameter=command>\nplaceholder\n</parameter>\n</function>\n</tool_call>"}}],
+            "strata_rejected_tool_calls": [{"name": "shell__dummy", "reason": "undeclared"}]
+        });
+        let message = response_to_message(&response)?;
+        let requests: Vec<_> = message
+            .content
+            .iter()
+            .filter_map(|c| match c {
+                MessageContentBlock::ToolRequest(r) => Some(r),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].id, "chatcmpl-rej_rejected_0");
+        assert_rejected_tool_error(requests[0], "shell__dummy");
+        Ok(())
+    }
+
+    #[test]
+    fn test_response_to_message_without_rejected_tool_calls_is_unchanged() -> anyhow::Result<()> {
+        let response = json!({"choices": [{"index": 0, "finish_reason": "stop",
+            "message": {"role": "assistant", "content": "done"}}]});
+        let message = response_to_message(&response)?;
+        assert!(message
+            .content
+            .iter()
+            .all(|c| !matches!(c, MessageContentBlock::ToolRequest(_))));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_streaming_surfaces_strata_rejected_tool_calls() {
+        let response_lines = concat!(
+            r#"data: {"id":"chatcmpl-rej","model":"m","choices":[{"index":0,"delta":{"role":"assistant","content":"<tool_call><function=shell__dummy></function></tool_call>"},"finish_reason":null}]}"#,
+            "\n",
+            r#"data: {"id":"chatcmpl-rej","model":"m","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"strata_rejected_tool_calls":[{"name":"shell__dummy","reason":"undeclared"}]}"#,
+            "\n",
+            "data: [DONE]\n",
+        );
+        let requests = collect_streamed_tool_requests(response_lines).await;
+        assert_eq!(requests.len(), 1);
+        assert_rejected_tool_error(&requests[0], "shell__dummy");
     }
 
     #[tokio::test]
