@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import MarkdownContent from './MarkdownContent';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from './ui/collapsible';
 import Expand from './ui/Expand';
+import { useStepsStartCollapsed } from './turnWorkContext';
 
 interface ThinkingContentProps {
   content: string;
@@ -9,6 +10,7 @@ interface ThinkingContentProps {
 }
 
 export default function ThinkingContent({ content, isExpanded }: ThinkingContentProps) {
+  const startCollapsed = useStepsStartCollapsed();
   const [manualToggle, setManualToggle] = useState<boolean | null>(null);
   const prevIsExpanded = useRef(isExpanded);
 
@@ -19,7 +21,7 @@ export default function ThinkingContent({ content, isExpanded }: ThinkingContent
     prevIsExpanded.current = isExpanded;
   }, [isExpanded]);
 
-  const expanded = manualToggle !== null ? manualToggle : isExpanded;
+  const expanded = manualToggle !== null ? manualToggle : isExpanded && !startCollapsed;
 
   return (
     <Collapsible open={expanded} onOpenChange={(open) => setManualToggle(open)} className="mb-2">

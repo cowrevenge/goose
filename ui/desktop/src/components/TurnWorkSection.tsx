@@ -4,6 +4,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from './ui/collap
 import Expand from './ui/Expand';
 import { defineMessages, useIntl } from '../i18n';
 import { formatDuration, type TurnStats } from '../utils/turnGrouping';
+import { StepsStartCollapsedContext } from './turnWorkContext';
 
 const i18n = defineMessages({
   working: { id: 'turnWork.working', defaultMessage: 'Working' },
@@ -91,7 +92,11 @@ export default function TurnWorkSection({
       </CollapsibleTrigger>
       {/* Stay mounted while closed so tool cards keep their state (timers, expanded output). */}
       <CollapsibleContent forceMount className="data-[state=closed]:hidden">
-        <div className="mt-2 ml-[5px] border-l border-border-subtle pl-4">{children}</div>
+        <div className="mt-2 ml-[5px] border-l border-border-subtle pl-4">
+          <StepsStartCollapsedContext.Provider value={true}>
+            {children}
+          </StepsStartCollapsedContext.Provider>
+        </div>
       </CollapsibleContent>
     </Collapsible>
   );

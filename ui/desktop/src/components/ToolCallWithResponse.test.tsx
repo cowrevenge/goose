@@ -11,6 +11,7 @@ import type {
 import { getAnyToolConfirmationData } from '../types/message';
 import { resolveAcpPermissionRequest } from '../acp/permissionRequests';
 import ToolCallWithResponse from './ToolCallWithResponse';
+import { StepsStartCollapsedContext } from './turnWorkContext';
 
 vi.mock('../acp/permissionRequests', () => ({
   resolveAcpPermissionRequest: vi.fn(),
@@ -219,5 +220,37 @@ describe('Code Mode execution history', () => {
           element.textContent?.includes('async function run') === true
       )
     ).toBeInTheDocument();
+  });
+});
+
+describe('ToolCallWithResponse inside a turn work section', () => {
+  beforeEach(() => {
+    vi.mocked(window.electron.getSetting).mockResolvedValue('detailed');
+  });
+
+  it('starts collapsed and opens one layer per click', async () => {
+    const user = userEvent.setup();
+    render(
+      <StepsStartCollapsedContext.Provider value={true}>
+        <ToolCallWithResponse
+          isCancelledMessage={false}
+          toolRequest={toolRequest}
+          toolResponse={toolResponse}
+          isStreamingMessage={false}
+          isPendingApproval={false}
+        />
+      </StepsStartCollapsedContext.Provider>,
+      { wrapper: IntlTestWrapper }
+    );
+
+    const buttons = screen.getAllByRole('button');
+    expect(buttons).toHaveLength(1);
+    expect(screen.queryByText('final result')).not.toBeInTheDocument();
+
+    await user.click(buttons[0]);
+
+    // The card opens to its sections (details, output), each still collapsed.
+    expect(screen.getAllByRole('button').length).toBeGreaterThan(1);
+    expect(screen.queryByText('final result')).not.toBeInTheDocument();
   });
 });
