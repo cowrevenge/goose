@@ -111,14 +111,19 @@ pub(crate) fn shell_tool_description(shell: &str) -> String {
              work). Do not write cmd.exe syntax: no `dir /b`, `findstr`, `type`, `more`, \
              `del /f`, `2>NUL` or `%VAR%`. Use `Get-ChildItem -Name`, `Select-String`, \
              `Get-Content`, `Remove-Item`, `2>$null`, `$env:VAR`. A lone `&` is the call \
-             operator, not a separator."
+             operator, not a separator. The command already runs in PowerShell: never wrap \
+             it in `powershell -Command` or `pwsh -Command`, because the outer shell expands \
+             `$variables` inside the quotes before the inner one runs."
         }
         "powershell" => {
             " Commands run under Windows PowerShell 5.1. Chain commands with `;` only \
              (`&&` and `||` do not exist in 5.1). Do not write cmd.exe syntax: no \
              `dir /b`, `findstr`, `type`, `more`, `del /f`, `2>NUL` or `%VAR%`. Use \
              `Get-ChildItem -Name`, `Select-String`, `Get-Content`, `Remove-Item`, \
-             `2>$null`, `$env:VAR`. A lone `&` is the call operator, not a separator."
+             `2>$null`, `$env:VAR`. A lone `&` is the call operator, not a separator. \
+             The command already runs in PowerShell: never wrap it in `powershell -Command` \
+             or `pwsh -Command`, because the outer shell expands `$variables` inside the \
+             quotes before the inner one runs."
         }
         _ => "",
     };
@@ -523,6 +528,23 @@ mod tests {
             !description.contains("`&&` and `||` also work"),
             "5.1 must not advertise chain operators: {description}"
         );
+    }
+
+    #[test]
+    fn shell_description_powershell_forbids_nesting_a_second_shell() {
+        for shell in ["pwsh", "powershell"] {
+            let description = shell_tool_description(shell);
+            assert!(
+                description.contains("never wrap it in `powershell -Command` or `pwsh -Command`"),
+                "{shell} must forbid nested shells: {description}"
+            );
+            assert!(
+                description.contains("expands `$variables` inside the quotes"),
+                "{shell} must say why: {description}"
+            );
+        }
+        assert!(!shell_tool_description("cmd").contains("never wrap it"));
+        assert!(!shell_tool_description("bash").contains("never wrap it"));
     }
 
     #[test]
