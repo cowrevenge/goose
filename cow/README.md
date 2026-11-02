@@ -44,3 +44,25 @@ Set in `%APPDATA%\Block\goose\config\config.yaml`:
 - `GOOSE_SHELL: pwsh` (PowerShell 7). `powershell` is Windows PowerShell 5.1, which has no `&&`/`||`;
   cmd truncates commands at the first newline.
 - Per-model `context_limit` in `custom_providers/*.json`; `null` means Goose's 128k default.
+
+## Switching the model from the picker (`model_switch_url`)
+
+Strata serves one model per server process: it ignores the `model` name in a request and answers
+with whatever config it was started on. So picking another model in Goose would change the label
+and the context limit while the weights stayed put, and nothing would say so.
+
+Setting `model_switch_url` on a custom provider fixes that. Before each request Goose POSTs
+`{"model": "<name>"}` there and waits for a success, then sends the completion:
+
+```json
+"model_switch_url": "http://127.0.0.1:8081/model"
+```
+
+That address is StrataTray v13 or later, which listens on loopback and restarts Strata on the
+config whose `model_name` matches. Strata starts lazily, so the switcher only has to get the right
+server listening; the weights then load inside Goose's own first request, as they always did.
+
+It is a separate request, so a restart cannot eat the completion's timeout. A switcher that is not
+running is ignored, since that leaves the behaviour this had before. A switcher that *refuses*,
+because no config has that model, fails the request instead, which is the point: the alternative is
+an answer from a different model with nothing to show for it.

@@ -199,6 +199,12 @@ pub struct DeclarativeProviderConfig {
     pub emit_clear_thinking: bool,
     #[serde(default)]
     pub setup: Option<goose_provider_types::canonical::catalog::ProviderSetupMetadata>,
+    /// A local switcher that puts a model on the server before a request goes out, for a backend
+    /// that serves one model per process (a local runner restarted on a different config). Goose
+    /// POSTs `{"model": "<name>"}` here and waits for a success before sending the request, so a
+    /// restart cannot eat the completion's own timeout. Unset means Goose never asks.
+    #[serde(default)]
+    pub model_switch_url: Option<String>,
 }
 
 fn default_requires_auth() -> bool {

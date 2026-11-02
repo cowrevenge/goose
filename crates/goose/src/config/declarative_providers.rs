@@ -240,6 +240,7 @@ pub fn create_custom_provider(
         preserves_thinking,
         emit_clear_thinking: false,
         setup: None,
+        model_switch_url: None,
     };
 
     persist_custom_provider(&provider_config)?;
@@ -362,6 +363,7 @@ pub fn update_custom_provider(params: UpdateCustomProviderParams) -> Result<()> 
             preserves_thinking,
             emit_clear_thinking: existing_config.emit_clear_thinking,
             setup: existing_config.setup,
+            model_switch_url: existing_config.model_switch_url,
         };
 
         persist_custom_provider(&updated_config)?;
@@ -641,6 +643,7 @@ mod tests {
             preserves_thinking: true,
             emit_clear_thinking: false,
             setup: None,
+            model_switch_url: None,
         }
     }
 

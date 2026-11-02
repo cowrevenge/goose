@@ -425,6 +425,7 @@ mod tests {
             preserves_thinking: false,
             emit_clear_thinking: false,
             setup: None,
+            model_switch_url: None,
         }
     }
 

@@ -44,6 +44,8 @@ pub const OPEN_AI_VERSIONLESS_BASE_PATH: &str = "chat/completions";
 const OPEN_AI_DEFAULT_RESPONSES_PATH: &str = "v1/responses";
 const OPEN_AI_DEFAULT_MODELS_PATH: &str = "v1/models";
 const N_CTX_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
+/// A model switch may restart a local server, so this is generous; it is its own request.
+const MODEL_SWITCH_TIMEOUT: Duration = Duration::from_secs(300);
 const N_CTX_FAILURE_TTL: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone, Copy)]
@@ -140,6 +142,7 @@ pub struct OpenAiProvider {
     skip_canonical_filtering: bool,
     preserve_thinking_context: bool,
     native_openai: bool,
+    model_switch_url: Option<String>,
     #[serde(skip)]
     session_id_provider: Option<OpenAiSessionIdProvider>,
     #[serde(skip)]
@@ -174,6 +177,7 @@ pub struct OpenAiProviderBuilder {
     preserve_thinking_context: bool,
     session_id_provider: Option<OpenAiSessionIdProvider>,
     native_openai: bool,
+    model_switch_url: Option<String>,
 }
 
 impl OpenAiProviderBuilder {
@@ -192,6 +196,7 @@ impl OpenAiProviderBuilder {
             preserve_thinking_context: false,
             session_id_provider: None,
             native_openai: false,
+            model_switch_url: None,
         }
     }
 
@@ -273,6 +278,11 @@ impl OpenAiProviderBuilder {
         self
     }
 
+    pub fn model_switch_url(mut self, model_switch_url: Option<String>) -> Self {
+        self.model_switch_url = model_switch_url;
+        self
+    }
+
     pub fn build(self) -> OpenAiProvider {
         OpenAiProvider {
             api_client: self.api_client,
@@ -288,12 +298,55 @@ impl OpenAiProviderBuilder {
             preserve_thinking_context: self.preserve_thinking_context,
             session_id_provider: self.session_id_provider,
             native_openai: self.native_openai,
+            model_switch_url: self.model_switch_url,
             n_ctx_cache: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
 
 impl OpenAiProvider {
+    /// Asks the configured switcher to put `model` on the server before the request goes out, for a
+    /// backend that serves one model per process. It is a separate request, so a restart cannot eat
+    /// the completion's own timeout, and it is a no-op when `model_switch_url` is unset.
+    ///
+    /// A switcher that is not answering is not an error: the server then keeps whatever was started
+    /// by hand, exactly as before this existed. A switcher that answers with a failure is, because
+    /// it means the model was asked for and refused, and the reply would otherwise come from some
+    /// other model without saying so.
+    async fn ensure_model_switched(&self, model: &str) -> Result<(), ProviderError> {
+        let Some(url) = self.model_switch_url.as_deref() else {
+            return Ok(());
+        };
+        let client = reqwest::Client::builder()
+            .timeout(MODEL_SWITCH_TIMEOUT)
+            .build()
+            .map_err(|error| {
+                ProviderError::RequestFailed(format!("model switcher client: {error}"))
+            })?;
+        let response = match client
+            .post(url)
+            .json(&json!({ "model": model }))
+            .send()
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => {
+                tracing::debug!(
+                    "model switcher at {url} did not answer ({error}); leaving the loaded model alone"
+                );
+                return Ok(());
+            }
+        };
+        if response.status().is_success() {
+            return Ok(());
+        }
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        Err(ProviderError::RequestFailed(format!(
+            "could not switch to model '{model}': the switcher at {url} answered {status}: {body}"
+        )))
+    }
+
     pub async fn stream_for_model(
         &self,
         model_config: &ModelConfig,
@@ -420,6 +473,7 @@ impl OpenAiProvider {
             preserve_thinking_context: false,
             session_id_provider: None,
             native_openai: false,
+            model_switch_url: None,
             n_ctx_cache: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -841,6 +895,7 @@ impl Provider for OpenAiProvider {
         messages: &[Message],
         tools: &[Tool],
     ) -> Result<MessageStream, ProviderError> {
+        self.ensure_model_switched(&model_config.model_name).await?;
         if self.should_use_responses_api_for_provider(&model_config.model_name) {
             let (wire_model, _) =
                 crate::formats::openai::extract_reasoning_effort(&model_config.model_name);
@@ -1034,7 +1089,8 @@ pub fn from_declarative_config(
         .custom_models(custom_models)
         .dynamic_models(config.dynamic_models)
         .skip_canonical_filtering(config.skip_canonical_filtering)
-        .preserve_thinking_context(config.preserves_thinking))
+        .preserve_thinking_context(config.preserves_thinking)
+        .model_switch_url(config.model_switch_url.clone()))
 }
 
 pub fn parse_custom_headers(s: String) -> HashMap<String, String> {
@@ -1094,6 +1150,7 @@ mod tests {
             preserve_thinking_context: false,
             session_id_provider: None,
             native_openai: false,
+            model_switch_url: None,
             n_ctx_cache: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -1519,6 +1576,7 @@ mod tests {
             preserves_thinking: false,
             emit_clear_thinking: false,
             setup: None,
+            model_switch_url: None,
         }
     }
 
@@ -1647,8 +1705,76 @@ mod tests {
             preserve_thinking_context: false,
             session_id_provider: None,
             native_openai: false,
+            model_switch_url: None,
             n_ctx_cache: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    #[tokio::test]
+    async fn model_switch_asks_the_switcher_for_the_model() {
+        use wiremock::matchers::{body_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let switcher = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/model"))
+            .and(body_json(json!({ "model": "some-model" })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "switched": true })))
+            .expect(1)
+            .mount(&switcher)
+            .await;
+
+        let mut provider =
+            make_provider_with_custom_models("http://localhost:1", "v1/chat/completions", vec![]);
+        provider.model_switch_url = Some(format!("{}/model", switcher.uri()));
+
+        provider.ensure_model_switched("some-model").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn model_switch_is_skipped_without_a_url() {
+        let provider =
+            make_provider_with_custom_models("http://localhost:1", "v1/chat/completions", vec![]);
+        provider.ensure_model_switched("some-model").await.unwrap();
+    }
+
+    // The switcher not running means the model is whatever was started by hand: that is the
+    // behaviour without this feature, so it must not fail the request.
+    #[tokio::test]
+    async fn model_switch_ignores_a_switcher_that_is_not_there() {
+        let mut provider =
+            make_provider_with_custom_models("http://localhost:1", "v1/chat/completions", vec![]);
+        provider.model_switch_url = Some("http://127.0.0.1:1/model".to_string());
+        provider.ensure_model_switched("some-model").await.unwrap();
+    }
+
+    // A refusal is different: the model was asked for and denied, so answering from whatever else
+    // is loaded would be a silent swap.
+    #[tokio::test]
+    async fn model_switch_fails_when_the_switcher_refuses() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let switcher = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/model"))
+            .respond_with(
+                ResponseTemplate::new(409).set_body_json(json!({ "error": "no config has that" })),
+            )
+            .mount(&switcher)
+            .await;
+
+        let mut provider =
+            make_provider_with_custom_models("http://localhost:1", "v1/chat/completions", vec![]);
+        provider.model_switch_url = Some(format!("{}/model", switcher.uri()));
+
+        let error = provider
+            .ensure_model_switched("missing-model")
+            .await
+            .unwrap_err();
+        let text = error.to_string();
+        assert!(text.contains("missing-model"), "{text}");
+        assert!(text.contains("409"), "{text}");
     }
 
     #[tokio::test]
