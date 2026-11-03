@@ -1,5 +1,6 @@
 pub mod edit;
 pub mod image;
+pub mod read;
 pub mod shell;
 mod shell_output_streaming;
 mod shell_process;
@@ -12,6 +13,7 @@ use async_trait::async_trait;
 use edit::{EditTools, FileEditParams, FileWriteParams};
 use image::{ImageReadParams, ImageTool};
 use indoc::indoc;
+use read::{FileReadParams, ReadTool};
 use rmcp::model::{
     Annotations, CallToolResult, ContentBlock, Implementation, InitializeResult, JsonObject,
     ListToolsResult, ServerCapabilities, TextContent, Tool, ToolAnnotations,
@@ -37,6 +39,7 @@ pub struct DeveloperClient {
     edit_tools: Arc<EditTools>,
     tree_tool: Arc<TreeTool>,
     image_tool: Arc<ImageTool>,
+    read_tool: Arc<ReadTool>,
 }
 
 fn developer_instructions() -> String {
@@ -148,6 +151,7 @@ impl DeveloperClient {
             edit_tools: Arc::new(EditTools::new()),
             tree_tool: Arc::new(TreeTool::new()),
             image_tool: Arc::new(ImageTool::new()),
+            read_tool: Arc::new(ReadTool::new()),
         })
     }
 
@@ -170,6 +174,18 @@ impl DeveloperClient {
 
     pub(crate) fn get_tools() -> Vec<Tool> {
         vec![
+            Tool::new(
+                "read".to_string(),
+                "Read a text file as numbered lines. Use offset (first line, from 1) and limit (line count) to read part of a large file.".to_string(),
+                Self::schema::<FileReadParams>(),
+            )
+            .annotate(ToolAnnotations::from_raw(
+                Some("Read".to_string()),
+                Some(true),
+                Some(false),
+                Some(true),
+                Some(false),
+            )),
             Tool::new(
                 "write".to_string(),
                 "Create a new file or overwrite an existing file. Creates parent directories if needed.".to_string(),
@@ -272,6 +288,12 @@ impl McpClientTrait for DeveloperClient {
                     .await),
                 Err(error) => Ok(ShellTool::error_result(&format!("Error: {error}"), None)),
             },
+            "read" => match Self::parse_args::<FileReadParams>(arguments) {
+                Ok(params) => Ok(self.read_tool.file_read_with_cwd(params, working_dir)),
+                Err(error) => Ok(CallToolResult::error(vec![visible_text(format!(
+                    "Error: {error}"
+                ))])),
+            },
             "write" => match Self::parse_args::<FileWriteParams>(arguments) {
                 Ok(params) => Ok(self.edit_tools.file_write_with_cwd(params, working_dir)),
                 Err(error) => Ok(CallToolResult::error(vec![visible_text(format!(
@@ -324,7 +346,10 @@ mod tests {
             .map(|t| t.name.to_string())
             .collect();
 
-        assert_eq!(names, vec!["write", "edit", "shell", "tree", "read_image"]);
+        assert_eq!(
+            names,
+            vec!["read", "write", "edit", "shell", "tree", "read_image"]
+        );
     }
 
     #[test]
