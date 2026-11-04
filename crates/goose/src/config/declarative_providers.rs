@@ -320,6 +320,9 @@ pub fn update_custom_provider(params: UpdateCustomProviderParams) -> Result<()> 
                         .thinking_preservation_format
                         .or(existing.thinking_preservation_format);
                     model.request_params = model.request_params.or(existing.request_params.clone());
+                    model.reasoning_efforts = model
+                        .reasoning_efforts
+                        .or(existing.reasoning_efforts.clone());
                 }
                 model
             })
@@ -625,6 +628,7 @@ mod tests {
                 supports_vision: None,
                 thinking_preservation_format: None,
                 request_params: None,
+                reasoning_efforts: None,
             }],
             headers: None,
             session_id_header_override: None,

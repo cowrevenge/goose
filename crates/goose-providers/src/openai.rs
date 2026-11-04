@@ -12,7 +12,8 @@ use crate::errors::ProviderError;
 use crate::formats::openai::is_openai_responses_model;
 use crate::formats::openai::{
     create_request_with_options, get_cost, get_usage, is_reserved_request_param_key,
-    record_response_metadata, response_to_message, OpenAiFormatOptions,
+    reasoning_effort_from_levels, record_response_metadata, response_to_message,
+    OpenAiFormatOptions,
 };
 use crate::formats::openai_responses::{
     create_responses_request_for_model, get_responses_usage, responses_api_to_message,
@@ -929,6 +930,9 @@ impl Provider for OpenAiProvider {
                 },
             )?;
 
+            if let Some(levels) = declared_model.and_then(|m| m.reasoning_efforts.as_deref()) {
+                apply_declared_reasoning_effort(&mut payload, model_config, levels);
+            }
             if let Some(params) = declared_model.and_then(|m| m.request_params.as_ref()) {
                 apply_declared_request_params(&mut payload, params);
             }
@@ -990,6 +994,31 @@ impl Provider for OpenAiProvider {
 /// Merges a model's declared `request_params` into an already-built payload.
 ///
 /// Reserved keys are skipped so a declaration cannot clobber the streaming setup.
+/// For a model that declares the `reasoning_effort` values its server accepts, sends the thinking
+/// level picked in the UI as the closest of them (so "off" reaches a server that spells it `none`).
+/// With no level picked the payload is left as built; with a level the server has no word for, the
+/// field is dropped rather than sent as one it would reject.
+fn apply_declared_reasoning_effort(
+    payload: &mut serde_json::Value,
+    model_config: &ModelConfig,
+    levels: &[String],
+) {
+    let Some(effort) = model_config.thinking_effort() else {
+        return;
+    };
+    let Some(object) = payload.as_object_mut() else {
+        return;
+    };
+    match reasoning_effort_from_levels(effort, levels) {
+        Some(level) => {
+            object.insert("reasoning_effort".to_string(), json!(level));
+        }
+        None => {
+            object.remove("reasoning_effort");
+        }
+    }
+}
+
 fn apply_declared_request_params(
     payload: &mut serde_json::Value,
     params: &HashMap<String, serde_json::Value>,
@@ -2152,6 +2181,64 @@ mod tests {
     #[test]
     fn cerebras_preserves_thinking_by_default() {
         assert!(cerebras_config().preserves_thinking);
+    }
+
+    fn qwen_levels() -> Vec<String> {
+        ["none", "low", "medium", "high", "xhigh"]
+            .iter()
+            .map(|level| level.to_string())
+            .collect()
+    }
+
+    fn config_with_effort(effort: &str) -> ModelConfig {
+        ModelConfig::new("qwen-local").with_merged_request_params(HashMap::from([(
+            "thinking_effort".to_string(),
+            json!(effort),
+        )]))
+    }
+
+    // The point of the declared list: "off" in the UI has to reach a server that spells it
+    // `none`, where the catalog-less fallback would have sent `low` and kept thinking on.
+    #[test]
+    fn declared_reasoning_effort_maps_each_ui_level() {
+        for (picked, sent) in [
+            ("off", "none"),
+            ("low", "low"),
+            ("medium", "medium"),
+            ("high", "high"),
+            ("max", "xhigh"),
+        ] {
+            let mut payload = json!({ "model": "qwen-local", "reasoning_effort": "low" });
+            apply_declared_reasoning_effort(
+                &mut payload,
+                &config_with_effort(picked),
+                &qwen_levels(),
+            );
+            assert_eq!(payload["reasoning_effort"], json!(sent), "picked {picked}");
+        }
+    }
+
+    #[test]
+    fn declared_reasoning_effort_leaves_the_payload_alone_without_a_pick() {
+        let mut payload = json!({ "model": "qwen-local" });
+        apply_declared_reasoning_effort(
+            &mut payload,
+            &ModelConfig::new("qwen-local"),
+            &qwen_levels(),
+        );
+        assert!(payload.get("reasoning_effort").is_none());
+    }
+
+    // A level the server has no word for is dropped, not sent as a value it would reject.
+    #[test]
+    fn declared_reasoning_effort_drops_a_level_the_server_lacks() {
+        let mut payload = json!({ "model": "m", "reasoning_effort": "low" });
+        apply_declared_reasoning_effort(
+            &mut payload,
+            &config_with_effort("off"),
+            &["high".to_string()],
+        );
+        assert!(payload.get("reasoning_effort").is_none());
     }
 
     #[test]

@@ -2005,20 +2005,33 @@ pub fn openai_reasoning_effort_for_thinking(
         .as_ref()
         .and_then(|model| model.reasoning_efforts.as_deref());
 
-    let preferred: &[&str] = match effort {
-        ThinkingEffort::Off => &["none", "minimal", "low"],
-        ThinkingEffort::Low => &["low", "minimal", "medium", "high", "xhigh"],
-        ThinkingEffort::Medium => &["medium", "high", "low", "xhigh"],
-        ThinkingEffort::High => &["high", "medium", "xhigh", "low"],
-        ThinkingEffort::Max => &["max", "xhigh", "high", "medium", "low"],
-    };
-
-    preferred
+    preferred_reasoning_levels(effort)
         .iter()
         .find(|level| match catalog_efforts {
             Some(values) => values.iter().any(|value| value == **level),
             None => openai_reasoning_efforts_for_model(model_name).contains(level),
         })
+        .map(|level| (*level).to_string())
+}
+
+/// The `reasoning_effort` words a thinking level may be sent as, closest first.
+fn preferred_reasoning_levels(effort: ThinkingEffort) -> &'static [&'static str] {
+    match effort {
+        ThinkingEffort::Off => &["none", "minimal", "low"],
+        ThinkingEffort::Low => &["low", "minimal", "medium", "high", "xhigh"],
+        ThinkingEffort::Medium => &["medium", "high", "low", "xhigh"],
+        ThinkingEffort::High => &["high", "medium", "xhigh", "low"],
+        ThinkingEffort::Max => &["max", "xhigh", "high", "medium", "low"],
+    }
+}
+
+/// A thinking level as the closest of the levels a model declares it accepts
+/// (`ModelInfo::reasoning_efforts`), for a server outside the provider catalog. `None` when the
+/// model accepts none of the candidates for that level.
+pub fn reasoning_effort_from_levels(effort: ThinkingEffort, levels: &[String]) -> Option<String> {
+    preferred_reasoning_levels(effort)
+        .iter()
+        .find(|level| levels.iter().any(|accepted| accepted.eq_ignore_ascii_case(level)))
         .map(|level| (*level).to_string())
 }
 
