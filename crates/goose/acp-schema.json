@@ -1948,6 +1948,16 @@
           ],
           "description": "Whether the model supports reasoning/extended thinking."
         },
+        "reasoningEfforts": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "description": "The reasoning_effort words this model's server accepts, when its provider file lists them.\nThe thinking picker offers only these levels."
+        },
         "recommended": {
           "type": "boolean",
           "description": "Whether this model should appear in the compact recommended picker.",

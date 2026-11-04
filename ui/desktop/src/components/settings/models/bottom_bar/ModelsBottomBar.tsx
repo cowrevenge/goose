@@ -10,7 +10,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '../../../ui/dropdown-menu';
-import { getProviderMetadata, fetchModelReasoning } from '../modelInterface';
+import { getProviderMetadata, fetchModelReasoning, fetchModelThinking } from '../modelInterface';
 import { getModelDisplayName } from '../predefinedModelsUtils';
 import {
   acpReadThinkingEffort,
@@ -69,15 +69,41 @@ const i18n = defineMessages({
   thinkingMedium: { id: 'modelsBottomBar.thinkingMedium', defaultMessage: 'Medium' },
   thinkingHigh: { id: 'modelsBottomBar.thinkingHigh', defaultMessage: 'High' },
   thinkingMax: { id: 'modelsBottomBar.thinkingMax', defaultMessage: 'Max' },
+  thinkingXHigh: { id: 'modelsBottomBar.thinkingXHigh', defaultMessage: 'XHigh' },
 });
 
-const THINKING_LEVELS: { value: ThinkingEffort; label: keyof typeof i18n }[] = [
+type ThinkingLevel = { value: ThinkingEffort; label: keyof typeof i18n };
+
+const THINKING_LEVELS: ThinkingLevel[] = [
   { value: 'off', label: 'thinkingOff' },
   { value: 'low', label: 'thinkingLow' },
   { value: 'medium', label: 'thinkingMedium' },
   { value: 'high', label: 'thinkingHigh' },
   { value: 'max', label: 'thinkingMax' },
 ];
+
+// A server word, as listed in the provider file, and the picker level that sends it.
+const SERVER_THINKING_LEVELS: Record<string, ThinkingLevel> = {
+  none: { value: 'off', label: 'thinkingOff' },
+  low: { value: 'low', label: 'thinkingLow' },
+  medium: { value: 'medium', label: 'thinkingMedium' },
+  high: { value: 'high', label: 'thinkingHigh' },
+  xhigh: { value: 'max', label: 'thinkingXHigh' },
+  max: { value: 'max', label: 'thinkingMax' },
+};
+
+/** Only the levels the model's server accepts, named its way; every level when none are listed. */
+function thinkingLevelsFor(efforts: string[] | null): ThinkingLevel[] {
+  if (!efforts || efforts.length === 0) return THINKING_LEVELS;
+  const levels: ThinkingLevel[] = [];
+  for (const word of efforts) {
+    const level = SERVER_THINKING_LEVELS[word.toLowerCase()];
+    if (level && !levels.some((l) => l.value === level.value)) levels.push(level);
+  }
+  if (levels.length === 0) return THINKING_LEVELS;
+  // Keep the picker in Off -> Max order whatever order the file lists them in.
+  return THINKING_LEVELS.flatMap((l) => levels.filter((x) => x.value === l.value));
+}
 
 interface ModelsBottomBarProps {
   sessionId: string | null;
@@ -124,6 +150,7 @@ export default function ModelsBottomBar({
   const [providerDefaultModel, setProviderDefaultModel] = useState<string | null>(null);
   const [recentModels, setRecentModels] = useState<RecentModel[]>([]);
   const [modelReasons, setModelReasons] = useState(false);
+  const [thinkingLevels, setThinkingLevels] = useState<ThinkingLevel[]>(THINKING_LEVELS);
   const [thinkingEffort, setThinkingEffort] = useState<ThinkingEffort>('off');
 
   // The thinking picker sits next to the model picker and only shows for a model that reasons.
@@ -134,12 +161,18 @@ export default function ModelsBottomBar({
       return;
     }
     void Promise.all([
-      fetchModelReasoning(currentProvider, currentModel),
+      fetchModelThinking(currentProvider, currentModel),
       acpReadThinkingEffort().catch(() => null),
-    ]).then(([reasoning, saved]) => {
+    ]).then(([thinking, saved]) => {
       if (cancelled) return;
-      setModelReasons(reasoning === true);
-      if (saved) setThinkingEffort(saved);
+      const levels = thinkingLevelsFor(thinking.efforts);
+      setModelReasons(thinking.reasoning);
+      setThinkingLevels(levels);
+      // A saved High on a server without "high" is sent as xhigh, so show it as that.
+      if (saved) {
+        const shown = saved === 'high' && !levels.some((l) => l.value === 'high') ? 'max' : saved;
+        setThinkingEffort(shown);
+      }
     });
     return () => {
       cancelled = true;
@@ -361,9 +394,7 @@ export default function ModelsBottomBar({
             <Brain className="mr-1 h-4 w-4 flex-shrink-0" />
             <span className="text-xs">
               {intl.formatMessage(
-                i18n[
-                  THINKING_LEVELS.find((l) => l.value === thinkingEffort)?.label ?? 'thinkingOff'
-                ]
+                i18n[thinkingLevels.find((l) => l.value === thinkingEffort)?.label ?? 'thinkingOff']
               )}
             </span>
           </DropdownMenuTrigger>
@@ -371,7 +402,7 @@ export default function ModelsBottomBar({
             <h6 className="text-xs text-text-primary mt-2 ml-2 mb-1">
               {intl.formatMessage(i18n.thinking)}
             </h6>
-            {THINKING_LEVELS.map((level) => (
+            {thinkingLevels.map((level) => (
               <DropdownMenuItem
                 key={level.value}
                 onClick={() => void handleThinkingPicked(level.value)}

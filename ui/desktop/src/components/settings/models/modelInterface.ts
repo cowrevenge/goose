@@ -101,3 +101,17 @@ export async function fetchModelReasoning(
     return fallback ?? null;
   }
 }
+
+/** Whether a model reasons, and the reasoning_effort words its provider file lists (if any). */
+export async function fetchModelThinking(
+  provider: string,
+  model: string
+): Promise<{ reasoning: boolean; efforts: string[] | null }> {
+  try {
+    const models = await acpListProviderModels(provider);
+    const match = models.find((m) => m.id === model);
+    return { reasoning: match?.reasoning === true, efforts: match?.reasoningEfforts ?? null };
+  } catch {
+    return { reasoning: false, efforts: null };
+  }
+}

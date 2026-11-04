@@ -605,6 +605,7 @@ export const zProviderInventoryModelDto = z.object({
     family: z.string().nullish(),
     contextLimit: z.int().gte(0).nullish(),
     reasoning: z.boolean().nullish(),
+    reasoningEfforts: z.array(z.string()).nullish(),
     recommended: z.boolean().optional().default(false)
 });
 

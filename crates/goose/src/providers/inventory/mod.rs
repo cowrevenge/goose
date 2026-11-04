@@ -76,6 +76,9 @@ pub struct InventoryModel {
     pub context_limit: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<bool>,
+    /// Taken from the provider file, never stored with the snapshot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_efforts: Option<Vec<String>>,
     /// Whether this model should appear in the compact recommended picker.
     pub recommended: bool,
 }
@@ -841,6 +844,7 @@ impl ProviderInventoryService {
                         .map(usize::try_from)
                         .transpose()?,
                     reasoning: row.try_get("reasoning")?,
+                    reasoning_efforts: None,
                     recommended: row
                         .try_get::<Option<bool>, _>("recommended")?
                         .unwrap_or(false),
@@ -1075,6 +1079,7 @@ fn enrich_model_ids_with_canonical(
                 family: None,
                 context_limit: None,
                 reasoning: None,
+                reasoning_efforts: None,
                 recommended: false,
             })
             .collect();
@@ -1165,11 +1170,15 @@ fn configured_models_to_inventory(
 /// about a local model. Without this the UI never offers a thinking level for it.
 fn apply_declared_reasoning(models: &mut [InventoryModel], declared: &[ModelInfo]) {
     for model in models.iter_mut() {
-        let declared_reasoning = declared
+        let Some(info) = declared
             .iter()
-            .any(|info| info.reasoning && (info.name == model.id || info.name == model.name));
-        if declared_reasoning {
+            .find(|info| info.name == model.id || info.name == model.name)
+        else {
+            continue;
+        };
+        if info.reasoning {
             model.reasoning = Some(true);
+            model.reasoning_efforts = info.reasoning_efforts.clone();
         }
     }
 }
@@ -1224,6 +1233,7 @@ fn enriched_model(
             .map(|model| model.limit.context)
             .or(fallback_context_limit),
         reasoning: metadata.as_ref().and_then(|model| model.reasoning),
+        reasoning_efforts: None,
         recommended: false,
     }
 }
@@ -1446,6 +1456,7 @@ mod tests {
     fn declared_reasoning_marks_an_uncatalogued_model() {
         let mut declared = ModelInfo::new("qwen3.8-flash-next-local");
         declared.reasoning = true;
+        declared.reasoning_efforts = Some(vec!["none".to_string(), "xhigh".to_string()]);
         let plain = ModelInfo::new("some-other-local-model");
         let mut models =
             configured_models_to_inventory("openai", &[declared.clone(), plain.clone()]);
@@ -1454,6 +1465,10 @@ mod tests {
         apply_declared_reasoning(&mut models, &[declared, plain]);
 
         assert_eq!(models[0].reasoning, Some(true));
+        assert_eq!(
+            models[0].reasoning_efforts,
+            Some(vec!["none".to_string(), "xhigh".to_string()])
+        );
         assert_eq!(models[1].reasoning, None);
     }
 
@@ -1500,6 +1515,7 @@ mod tests {
                 family: None,
                 context_limit: None,
                 reasoning: None,
+                reasoning_efforts: None,
                 recommended: false,
             }],
             last_updated_at: Some(Utc::now()),

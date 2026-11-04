@@ -980,6 +980,11 @@ export type ProviderInventoryModelDto = {
      */
     reasoning?: boolean | null;
     /**
+     * The reasoning_effort words this model's server accepts, when its provider file lists them.
+     * The thinking picker offers only these levels.
+     */
+    reasoningEfforts?: Array<string> | null;
+    /**
      * Whether this model should appear in the compact recommended picker.
      */
     recommended?: boolean;

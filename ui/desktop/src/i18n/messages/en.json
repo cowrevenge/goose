@@ -2411,6 +2411,9 @@
   "modelsBottomBar.thinkingOff": {
     "defaultMessage": "Off"
   },
+  "modelsBottomBar.thinkingXHigh": {
+    "defaultMessage": "XHigh"
+  },
   "modelsSection.resetDescription": {
     "defaultMessage": "Clear your selected model and provider settings to start fresh"
   },
