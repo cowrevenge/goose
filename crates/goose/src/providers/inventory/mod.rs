@@ -300,12 +300,13 @@ impl ProviderInventoryService {
             .read()
             .unwrap_or_else(|poisoned| recover_poisoned_read(poisoned, "refreshing_keys"))
             .contains(&descriptor.identity.inventory_key);
-        let models = inventory_models_from_snapshot(
+        let mut models = inventory_models_from_snapshot(
             snapshot.as_ref(),
             &descriptor.identity.provider_family,
             &descriptor.static_models,
             descriptor.supports_refresh,
         );
+        apply_declared_reasoning(&mut models, &descriptor.static_models);
 
         Ok(Some(ProviderInventoryEntry {
             provider_id: descriptor.provider_id,
@@ -1160,6 +1161,19 @@ fn configured_models_to_inventory(
     result
 }
 
+/// A provider file that marks a model as reasoning wins over the catalog, which knows nothing
+/// about a local model. Without this the UI never offers a thinking level for it.
+fn apply_declared_reasoning(models: &mut [InventoryModel], declared: &[ModelInfo]) {
+    for model in models.iter_mut() {
+        let declared_reasoning = declared
+            .iter()
+            .any(|info| info.reasoning && (info.name == model.id || info.name == model.name));
+        if declared_reasoning {
+            model.reasoning = Some(true);
+        }
+    }
+}
+
 fn inventory_models_from_snapshot(
     snapshot: Option<&InventorySnapshot>,
     provider_family: &str,
@@ -1426,6 +1440,21 @@ mod tests {
             ]
         );
         assert_eq!(models[0].name, models[1].name);
+    }
+
+    #[test]
+    fn declared_reasoning_marks_an_uncatalogued_model() {
+        let mut declared = ModelInfo::new("qwen3.8-flash-next-local");
+        declared.reasoning = true;
+        let plain = ModelInfo::new("some-other-local-model");
+        let mut models =
+            configured_models_to_inventory("openai", &[declared.clone(), plain.clone()]);
+        assert_eq!(models[0].reasoning, None);
+
+        apply_declared_reasoning(&mut models, &[declared, plain]);
+
+        assert_eq!(models[0].reasoning, Some(true));
+        assert_eq!(models[1].reasoning, None);
     }
 
     #[test]
