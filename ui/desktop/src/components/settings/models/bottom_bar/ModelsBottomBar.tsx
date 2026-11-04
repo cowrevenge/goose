@@ -1,4 +1,4 @@
-import { Sliders, Bot, LoaderCircle, Settings, History } from 'lucide-react';
+import { Sliders, Bot, Brain, Check, LoaderCircle, Settings, History } from 'lucide-react';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useModelAndProvider } from '../../../ModelAndProviderContext';
 import { SwitchModelModal } from '../subcomponents/SwitchModelModal';
@@ -12,7 +12,12 @@ import {
 } from '../../../ui/dropdown-menu';
 import { getProviderMetadata, fetchModelReasoning } from '../modelInterface';
 import { getModelDisplayName } from '../predefinedModelsUtils';
-import { acpReadThinkingEffort } from '../../../../acp/providers';
+import {
+  acpReadThinkingEffort,
+  acpSaveThinkingEffort,
+  acpSetSessionThinkingEffort,
+} from '../../../../acp/providers';
+import type { ThinkingEffort } from '../../../../types/providers';
 
 import { ModelSettingsPanel } from '../../localInference/ModelSettingsPanel';
 import { ScrollArea } from '../../../ui/scroll-area';
@@ -55,7 +60,24 @@ const i18n = defineMessages({
     id: 'modelsBottomBar.recentModels',
     defaultMessage: 'Recent',
   },
+  thinking: {
+    id: 'modelsBottomBar.thinking',
+    defaultMessage: 'Thinking',
+  },
+  thinkingOff: { id: 'modelsBottomBar.thinkingOff', defaultMessage: 'Off' },
+  thinkingLow: { id: 'modelsBottomBar.thinkingLow', defaultMessage: 'Low' },
+  thinkingMedium: { id: 'modelsBottomBar.thinkingMedium', defaultMessage: 'Medium' },
+  thinkingHigh: { id: 'modelsBottomBar.thinkingHigh', defaultMessage: 'High' },
+  thinkingMax: { id: 'modelsBottomBar.thinkingMax', defaultMessage: 'Max' },
 });
+
+const THINKING_LEVELS: { value: ThinkingEffort; label: keyof typeof i18n }[] = [
+  { value: 'off', label: 'thinkingOff' },
+  { value: 'low', label: 'thinkingLow' },
+  { value: 'medium', label: 'thinkingMedium' },
+  { value: 'high', label: 'thinkingHigh' },
+  { value: 'max', label: 'thinkingMax' },
+];
 
 interface ModelsBottomBarProps {
   sessionId: string | null;
@@ -101,6 +123,42 @@ export default function ModelsBottomBar({
   const [isLocalModelSettingsOpen, setIsLocalModelSettingsOpen] = useState(false);
   const [providerDefaultModel, setProviderDefaultModel] = useState<string | null>(null);
   const [recentModels, setRecentModels] = useState<RecentModel[]>([]);
+  const [modelReasons, setModelReasons] = useState(false);
+  const [thinkingEffort, setThinkingEffort] = useState<ThinkingEffort>('off');
+
+  // The thinking picker sits next to the model picker and only shows for a model that reasons.
+  useEffect(() => {
+    let cancelled = false;
+    if (!currentProvider || !currentModel) {
+      setModelReasons(false);
+      return;
+    }
+    void Promise.all([
+      fetchModelReasoning(currentProvider, currentModel),
+      acpReadThinkingEffort().catch(() => null),
+    ]).then(([reasoning, saved]) => {
+      if (cancelled) return;
+      setModelReasons(reasoning === true);
+      if (saved) setThinkingEffort(saved);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [currentProvider, currentModel]);
+
+  const handleThinkingPicked = async (effort: ThinkingEffort) => {
+    const previous = thinkingEffort;
+    setThinkingEffort(effort);
+    try {
+      if (sessionId) {
+        await acpSetSessionThinkingEffort(sessionId, effort);
+      }
+      await acpSaveThinkingEffort(effort);
+    } catch (error) {
+      console.error('Failed to set thinking level:', error);
+      setThinkingEffort(previous);
+    }
+  };
 
   const loadRecentModels = useCallback(async () => {
     const stored = (await window.electron.getSetting('recentModels')) ?? [];
@@ -292,6 +350,39 @@ export default function ModelsBottomBar({
           )}
         </DropdownMenuContent>
       </DropdownMenu>
+
+      {modelReasons && !isModelLoading && (
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            data-testid="thinking-picker"
+            className="ml-3 flex items-center hover:cursor-pointer text-text-primary/70 hover:text-text-primary transition-colors"
+            title={intl.formatMessage(i18n.thinking)}
+          >
+            <Brain className="mr-1 h-4 w-4 flex-shrink-0" />
+            <span className="text-xs">
+              {intl.formatMessage(
+                i18n[
+                  THINKING_LEVELS.find((l) => l.value === thinkingEffort)?.label ?? 'thinkingOff'
+                ]
+              )}
+            </span>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent side="top" align="center" className="w-36 text-sm">
+            <h6 className="text-xs text-text-primary mt-2 ml-2 mb-1">
+              {intl.formatMessage(i18n.thinking)}
+            </h6>
+            {THINKING_LEVELS.map((level) => (
+              <DropdownMenuItem
+                key={level.value}
+                onClick={() => void handleThinkingPicked(level.value)}
+              >
+                <span>{intl.formatMessage(i18n[level.label])}</span>
+                {level.value === thinkingEffort && <Check className="ml-auto h-4 w-4" />}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
 
       {isAddModelModalOpen ? (
         <SwitchModelModal

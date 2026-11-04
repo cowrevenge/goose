@@ -2393,6 +2393,24 @@
   "modelsBottomBar.selectModel": {
     "defaultMessage": "Select Model"
   },
+  "modelsBottomBar.thinking": {
+    "defaultMessage": "Thinking"
+  },
+  "modelsBottomBar.thinkingHigh": {
+    "defaultMessage": "High"
+  },
+  "modelsBottomBar.thinkingLow": {
+    "defaultMessage": "Low"
+  },
+  "modelsBottomBar.thinkingMax": {
+    "defaultMessage": "Max"
+  },
+  "modelsBottomBar.thinkingMedium": {
+    "defaultMessage": "Medium"
+  },
+  "modelsBottomBar.thinkingOff": {
+    "defaultMessage": "Off"
+  },
   "modelsSection.resetDescription": {
     "defaultMessage": "Clear your selected model and provider settings to start fresh"
   },
