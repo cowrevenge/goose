@@ -2020,7 +2020,7 @@ fn preferred_reasoning_levels(effort: ThinkingEffort) -> &'static [&'static str]
         ThinkingEffort::Off => &["none", "minimal", "low"],
         ThinkingEffort::Low => &["low", "minimal", "medium", "high", "xhigh"],
         ThinkingEffort::Medium => &["medium", "high", "low", "xhigh"],
-        ThinkingEffort::High => &["high", "medium", "xhigh", "low"],
+        ThinkingEffort::High => &["high", "xhigh", "medium", "low"],
         ThinkingEffort::Max => &["max", "xhigh", "high", "medium", "low"],
     }
 }

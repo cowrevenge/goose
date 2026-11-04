@@ -2184,7 +2184,7 @@ mod tests {
     }
 
     fn qwen_levels() -> Vec<String> {
-        ["none", "low", "medium", "high", "xhigh"]
+        ["none", "low", "medium", "xhigh"]
             .iter()
             .map(|level| level.to_string())
             .collect()
@@ -2205,7 +2205,7 @@ mod tests {
             ("off", "none"),
             ("low", "low"),
             ("medium", "medium"),
-            ("high", "high"),
+            ("high", "xhigh"),
             ("max", "xhigh"),
         ] {
             let mut payload = json!({ "model": "qwen-local", "reasoning_effort": "low" });
