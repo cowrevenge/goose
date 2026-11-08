@@ -1955,6 +1955,33 @@
   "localModelPicker.useModel": {
     "defaultMessage": "Use {modelId}"
   },
+  "loopToggle.failed": {
+    "defaultMessage": "Could not change the loop"
+  },
+  "loopToggle.goal": {
+    "defaultMessage": "Loop goal"
+  },
+  "loopToggle.goalPlaceholder": {
+    "defaultMessage": "What the agent keeps working on until you turn the loop off"
+  },
+  "loopToggle.loop": {
+    "defaultMessage": "Loop"
+  },
+  "loopToggle.off": {
+    "defaultMessage": "Off"
+  },
+  "loopToggle.on": {
+    "defaultMessage": "On"
+  },
+  "loopToggle.start": {
+    "defaultMessage": "Start loop"
+  },
+  "loopToggle.stop": {
+    "defaultMessage": "Stop loop"
+  },
+  "loopToggle.stopHint": {
+    "defaultMessage": "Stops at the end of the current turn."
+  },
   "markdownContent.copyCode": {
     "defaultMessage": "Copy code"
   },

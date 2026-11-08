@@ -4972,6 +4972,27 @@
       "x-side": "agent",
       "x-method": "_goose/unstable/session/rename"
     },
+    "SetSessionGrindRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        },
+        "goal": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "sessionId"
+      ],
+      "description": "Turn a session's loop (the /grind goal) on or off without sending a chat message, so it can\nbe switched while a turn is running. `goal: null` (or blank) turns it off.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/session/grind"
+    },
     "ArchiveSessionRequest_unstable": {
       "type": "object",
       "properties": {
@@ -7806,6 +7827,15 @@
                   ],
                   "description": "Params for _goose/unstable/session/rename",
                   "title": "RenameSessionRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/SetSessionGrindRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/session/grind",
+                  "title": "SetSessionGrindRequest_unstable"
                 },
                 {
                   "allOf": [

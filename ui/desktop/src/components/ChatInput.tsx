@@ -13,6 +13,7 @@ import { DirSwitcher } from './bottom_menu/DirSwitcher';
 import { GitBranchIndicator } from './GitBranchIndicator';
 import ModelsBottomBar from './settings/models/bottom_bar/ModelsBottomBar';
 import { BottomMenuExtensionSelection } from './bottom_menu/BottomMenuExtensionSelection';
+import { LoopToggle } from './bottom_menu/LoopToggle';
 import { cn } from '../utils';
 import { AlertType, useAlerts } from './alerts';
 import { useModelAndProvider } from './ModelAndProviderContext';
@@ -1738,6 +1739,15 @@ export default function ChatInput({
             />
           </div>
         </Tooltip>
+
+        {/* Left: loop on/off (the session's /grind goal) */}
+        {sessionId && (
+          <LoopToggle
+            sessionId={sessionId}
+            isLoading={isLoading}
+            onStartIdle={(goal) => handleSubmit({ msg: `/grind ${goal}`, images: [] })}
+          />
+        )}
 
         {/* Left: working directory (leaf folder name only) */}
         {!isBottomBarNarrow && (

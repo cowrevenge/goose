@@ -1614,6 +1614,15 @@ export const zRenameSessionRequest_unstable = z.object({
 });
 
 /**
+ * Turn a session's loop (the /grind goal) on or off without sending a chat message, so it can
+ * be switched while a turn is running. `goal: null` (or blank) turns it off.
+ */
+export const zSetSessionGrindRequest_unstable = z.object({
+    sessionId: z.string(),
+    goal: z.string().nullish().default(null)
+});
+
+/**
  * Archive a session (soft delete).
  */
 export const zArchiveSessionRequest_unstable = z.object({
@@ -2390,6 +2399,7 @@ export const zExtRequest = z.object({
             zTruncateSessionConversationRequest_unstable,
             zUpdateSessionProjectRequest_unstable,
             zRenameSessionRequest_unstable,
+            zSetSessionGrindRequest_unstable,
             zArchiveSessionRequest_unstable,
             zUnarchiveSessionRequest_unstable,
             zCreateSourceRequest_unstable,

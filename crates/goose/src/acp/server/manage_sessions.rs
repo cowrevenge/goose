@@ -220,6 +220,34 @@ impl GooseAcpAgent {
         Ok(EmptyResponse {})
     }
 
+    /// The running loop re-reads the session before each step, so the change takes effect at
+    /// the end of the current turn: off stops the grind nudge, on keeps the agent going.
+    pub(super) async fn on_set_session_grind(
+        &self,
+        req: SetSessionGrindRequest,
+    ) -> Result<EmptyResponse, agent_client_protocol::Error> {
+        use crate::session::extension_data::GoalState;
+
+        let session = self
+            .session_manager
+            .get_session(&req.session_id, false)
+            .await
+            .map_err(|_| {
+                agent_client_protocol::Error::resource_not_found(Some(req.session_id.clone()))
+                    .data(format!("Session not found: {}", req.session_id))
+            })?;
+        let mut state = GoalState::of(&session);
+        state.grind = req
+            .goal
+            .map(|goal| goal.trim().to_string())
+            .filter(|goal| !goal.is_empty());
+        self.session_manager
+            .set_extension_state(&req.session_id, &state)
+            .await
+            .internal_err()?;
+        Ok(EmptyResponse {})
+    }
+
     pub(super) async fn on_archive_session(
         &self,
         req: ArchiveSessionRequest,

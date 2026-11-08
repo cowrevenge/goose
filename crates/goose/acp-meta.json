@@ -411,6 +411,11 @@
       "responseType": "EmptyResponse"
     },
     {
+      "method": "_goose/unstable/session/grind",
+      "requestType": "SetSessionGrindRequest_unstable",
+      "responseType": "EmptyResponse"
+    },
+    {
       "method": "_goose/unstable/session/archive",
       "requestType": "ArchiveSessionRequest_unstable",
       "responseType": "EmptyResponse"

@@ -785,6 +785,17 @@ pub struct RenameSessionRequest {
     pub title: String,
 }
 
+/// Turn a session's loop (the /grind goal) on or off without sending a chat message, so it can
+/// be switched while a turn is running. `goal: null` (or blank) turns it off.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(method = "_goose/unstable/session/grind", response = EmptyResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct SetSessionGrindRequest {
+    pub session_id: String,
+    #[serde(default)]
+    pub goal: Option<String>,
+}
+
 /// Archive a session (soft delete).
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
 #[request(method = "_goose/unstable/session/archive", response = EmptyResponse)]

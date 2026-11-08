@@ -173,6 +173,7 @@ import type {
   ScheduleRecipeRequest_unstable,
   SetConfigExtensionEnabledRequest_unstable,
   SetRecipeSlashCommandRequest_unstable,
+  SetSessionGrindRequest_unstable,
   SetSessionSystemPromptRequest_unstable,
   SetToolPermissionsRequest_unstable,
   SetToolPermissionsResponse_unstable,
@@ -1101,6 +1102,12 @@ export class GooseExtClient {
     params: RenameSessionRequest_unstable,
   ): Promise<void> {
     await this.conn.request("_goose/unstable/session/rename", params);
+  }
+
+  async sessionGrind_unstable(
+    params: SetSessionGrindRequest_unstable,
+  ): Promise<void> {
+    await this.conn.request("_goose/unstable/session/grind", params);
   }
 
   async sessionArchive_unstable(

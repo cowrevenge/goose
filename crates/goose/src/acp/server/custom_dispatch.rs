@@ -686,6 +686,14 @@ impl GooseAcpAgent {
         self.on_rename_session(req).await
     }
 
+    #[custom_method(SetSessionGrindRequest)]
+    async fn dispatch_set_session_grind(
+        &self,
+        req: SetSessionGrindRequest,
+    ) -> Result<EmptyResponse, agent_client_protocol::Error> {
+        self.on_set_session_grind(req).await
+    }
+
     #[custom_method(ArchiveSessionRequest)]
     async fn dispatch_archive_session(
         &self,

@@ -508,6 +508,29 @@ async fn grind_is_bounded_by_max_turns() -> Result<()> {
     Ok(())
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn grind_switched_off_mid_turn_stops_at_the_end_of_that_turn() -> Result<()> {
+    // The desktop's loop toggle turns grind off while a turn is running, outside the chat.
+    let (pipeline, api) = test_pipeline().await?;
+    api.on("go").reply("grinding");
+    let held = api.on("never done").hold_reply("still grinding");
+    pipeline.set_grind(Some("never done".to_string())).await;
+
+    let run = pipeline.run(["go"]);
+    let switch_off = async {
+        held.entered().await;
+        pipeline.set_grind(None).await;
+        held.release();
+    };
+    let (result, ()) = tokio::join!(run, switch_off);
+    let result = result?;
+
+    assert_eq!(api.call_count(), 2);
+    result.assert_message(-1, Agent, "still grinding");
+
+    Ok(())
+}
+
 #[tokio::test]
 async fn slash_commands_yield_or_fall_through_to_inference() -> Result<()> {
     let (pipeline, api) = test_pipeline().await?;

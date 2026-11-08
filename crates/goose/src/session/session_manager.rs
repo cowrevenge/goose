@@ -2477,8 +2477,6 @@ impl SessionStorage {
         sql: &str,
         binds: &[ListBind],
     ) -> Result<Vec<Session>> {
-        use sqlx::Row;
-
         let mut fast = sqlx::query_as::<_, Session>(AssertSqlSafe(sql.to_string()));
         for bind in binds {
             fast = match bind {

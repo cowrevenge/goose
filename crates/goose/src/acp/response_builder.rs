@@ -45,6 +45,9 @@ struct SessionMeta<'a> {
     model_id: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     last_message_snippet: Option<&'a str>,
+    /// The loop (/grind) goal while the loop is on.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    grind: Option<String>,
 }
 
 impl<'a> From<&'a Session> for SessionMeta<'a> {
@@ -64,6 +67,7 @@ impl<'a> From<&'a Session> for SessionMeta<'a> {
                 .as_ref()
                 .map(|mc| mc.model_name.as_str()),
             last_message_snippet: session.last_message_snippet.as_deref(),
+            grind: crate::session::extension_data::GoalState::of(session).grind,
         }
     }
 }
