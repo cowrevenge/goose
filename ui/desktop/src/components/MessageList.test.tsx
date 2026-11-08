@@ -21,10 +21,25 @@ const messageUpdateCallbacks = vi.hoisted(
 );
 
 vi.mock('./GooseMessage', () => ({
-  default: ({ message }: { message: Message }) => {
+  default: ({
+    message,
+    compact,
+    onlyFailed,
+  }: {
+    message: Message;
+    compact?: boolean;
+    onlyFailed?: boolean;
+  }) => {
     const id = message.id ?? 'missing-id';
     renderCounts.set(id, (renderCounts.get(id) ?? 0) + 1);
-    return <div>{id}</div>;
+    return (
+      <div
+        data-compact={compact ? 'true' : undefined}
+        data-only-failed={onlyFailed ? 'true' : undefined}
+      >
+        {id}
+      </div>
+    );
   },
 }));
 
@@ -75,13 +90,13 @@ function toolRequest(id: string): MessageContent {
   };
 }
 
-function toolResponse(id: string): MessageContent {
+function toolResponse(id: string, isError = false): MessageContent {
   return {
     type: 'toolResponse',
     id,
     toolResult: {
       status: 'success',
-      value: { content: [{ type: 'text', text: 'complete' }], isError: false },
+      value: { content: [{ type: 'text', text: 'complete' }], isError },
     },
   };
 }
@@ -362,7 +377,7 @@ describe('MessageList transcript window', () => {
 });
 
 describe('MessageList turn grouping', () => {
-  it('folds a run of steps behind a summary of what they did and keeps the answer in view', () => {
+  it('collapses the work of a turn behind a summary and keeps the answer in view', () => {
     const transcript: Message[] = [
       message('u1', 'user', [{ type: 'text', text: 'Check the DB' }]),
       { ...message('a1', 'assistant', [toolRequest('t1')]), created: 10 },
@@ -372,13 +387,56 @@ describe('MessageList turn grouping', () => {
 
     const { container } = renderList(transcript);
 
-    const trigger = screen.getByRole('button', { name: /Used 1 tool/ });
-    const content = container.querySelector('.turn-steps [data-slot="collapsible-content"]');
+    const trigger = screen.getByRole('button', { name: /Worked for 35s · 1 tool call/ });
+    const content = container.querySelector('.turn-work [data-slot="collapsible-content"]');
     expect(content?.getAttribute('data-state')).toBe('closed');
     expect(content?.textContent).toContain('a1');
-    expect(screen.getByText('a2').closest('.turn-steps')).toBeNull();
+    expect(screen.getByText('a2').closest('.turn-work')).toBeNull();
 
     act(() => trigger.click());
     expect(content?.getAttribute('data-state')).toBe('open');
+    // Inside the work, every step is drawn one line at a time; the answer is drawn in full.
+    expect(screen.getByText('a1').getAttribute('data-compact')).toBe('true');
+    expect(screen.getByText('a2').getAttribute('data-compact')).toBeNull();
+  });
+
+  it('has no errors switch when nothing failed', () => {
+    renderList([
+      message('u1', 'user', [{ type: 'text', text: 'go' }]),
+      message('a1', 'assistant', [toolRequest('t1')]),
+      message('r1', 'user', [toolResponse('t1')]),
+      message('a2', 'assistant', [{ type: 'text', text: 'done' }]),
+    ]);
+    expect(screen.queryByTestId('errors-only-toggle')).toBeNull();
+  });
+
+  it('shows only the failed calls of the session when asked', () => {
+    renderList([
+      message('u1', 'user', [{ type: 'text', text: 'first' }]),
+      message('a1', 'assistant', [toolRequest('t1')]),
+      message('r1', 'user', [toolResponse('t1')]),
+      message('a2', 'assistant', [{ type: 'text', text: 'clean answer' }]),
+      message('u2', 'user', [{ type: 'text', text: 'second' }]),
+      message('b1', 'assistant', [toolRequest('t2'), toolRequest('t3')]),
+      message('s1', 'user', [toolResponse('t2', true), toolResponse('t3', true)]),
+      message('b2', 'assistant', [{ type: 'text', text: 'failed answer' }]),
+    ]);
+
+    const toggle = screen.getByTestId('errors-only-toggle');
+    expect(toggle.textContent).toContain('2 failed calls');
+    expect(screen.getByText('a1')).toBeTruthy();
+
+    act(() => toggle.click());
+
+    // Only the turn with failures is left, opened, drawn as its failed calls alone.
+    expect(screen.queryByText('a1')).toBeNull();
+    expect(screen.queryByText('u1')).toBeNull();
+    expect(screen.queryByText('b2')).toBeNull();
+    expect(screen.getByText('b1').getAttribute('data-only-failed')).toBe('true');
+    const content = screen.getByText('b1').closest('[data-slot="collapsible-content"]');
+    expect(content?.getAttribute('data-state')).toBe('open');
+
+    act(() => screen.getByTestId('errors-only-toggle').click());
+    expect(screen.getByText('a1')).toBeTruthy();
   });
 });

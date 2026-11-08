@@ -7,7 +7,6 @@ import {
   formatDuration,
   groupIntoTurns,
   type DisplayGroup,
-  type WorkBlock,
 } from './turnGrouping';
 
 const meta: Message['metadata'] = { agentVisible: true, userVisible: true };
@@ -145,70 +144,6 @@ describe('groupIntoTurns', () => {
     );
     expect(turn.stats.needsAttention).toBe(true);
     expect(turn.final).toBeNull();
-    const attention = turn.blocks.find((b) => b.kind === 'standout');
-    expect(attention).toMatchObject({ reason: 'attention' });
-  });
-});
-
-function shape(blocks: WorkBlock[]) {
-  return blocks.map((b) =>
-    b.kind === 'steps'
-      ? { steps: b.entries.map((e) => e.message.id), counts: b.counts }
-      : b.kind === 'standout'
-        ? { standout: b.reason, ids: b.entries.map((e) => e.message.id) }
-        : { text: b.entries.map((e) => e.message.id) }
-  );
-}
-
-describe('turn blocks', () => {
-  it('folds looking-around calls and keeps text, edits and failures in view', () => {
-    const messages = [
-      msg('u1', 'user', [text('fix the bug')]),
-      msg('a1', 'assistant', [call('t1', 'developer__read', { path: 'a.rs' })]),
-      msg('r1', 'user', [result('t1')]),
-      msg('a2', 'assistant', [call('t2', 'developer__read', { path: 'b.rs' })]),
-      msg('r2', 'user', [result('t2')]),
-      msg('a3', 'assistant', [call('t3', 'developer__shell', { command: 'rg foo' })]),
-      msg('r3', 'user', [result('t3')]),
-      msg('a4', 'assistant', [text('Found it in b.rs.'), call('t4', 'developer__edit')]),
-      msg('r4', 'user', [result('t4')]),
-      msg('a5', 'assistant', [call('t5', 'developer__shell', { command: 'cargo test' })]),
-      msg('r5', 'user', [result('t5', true)]),
-      msg('a6', 'assistant', [thinking('hm'), call('t6', 'developer__tree')]),
-      msg('r6', 'user', [result('t6')]),
-      msg('a7', 'assistant', [call('t7', 'developer__write', { path: 'c.rs' })]),
-      msg('r7', 'user', [result('t7')]),
-      msg('a8', 'assistant', [text('Fixed.')]),
-    ];
-    const [turn] = turns(group(messages));
-
-    expect(turn.final?.message.id).toBe('a8');
-    expect(shape(turn.blocks)).toEqual([
-      { steps: ['a1', 'r1', 'a2', 'r2', 'a3', 'r3'], counts: { read: 2, command: 1 } },
-      // The model's own words stay visible, with the call it made in the same message.
-      { text: ['a4', 'r4'] },
-      { standout: 'failed', ids: ['a5', 'r5'] },
-      { steps: ['a6', 'r6'], counts: { list: 1 } },
-      { standout: 'write', ids: ['a7', 'r7'] },
-    ]);
-  });
-
-  it('a long loop of quiet steps still splits at every piece of text', () => {
-    const messages = [msg('u1', 'user', [text('grind')])];
-    for (let i = 0; i < 3; i++) {
-      messages.push(msg(`n${i}`, 'assistant', [text(`Unit ${i}.`)]));
-      messages.push(msg(`c${i}`, 'assistant', [call(`t${i}`, 'developer__read')]));
-      messages.push(msg(`r${i}`, 'user', [result(`t${i}`)]));
-    }
-    const [turn] = turns(group(messages));
-    expect(turn.blocks.map((b) => b.kind)).toEqual([
-      'text',
-      'steps',
-      'text',
-      'steps',
-      'text',
-      'steps',
-    ]);
   });
 });
 

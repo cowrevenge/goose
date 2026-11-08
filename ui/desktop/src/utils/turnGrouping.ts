@@ -9,15 +9,11 @@ import {
 import type { MessageRowContext } from '../components/messageRowContext';
 
 /**
- * Groups one agent turn (everything between two real user messages) into blocks and an
- * always-visible final answer, the way claude.ai shows a turn:
- * - text the model writes between tool calls stays visible, and each piece of it starts a new block;
- * - runs of looking-around calls (reads, searches, listings, fetches, commands) and thinking fold
- *   into one line that says what they did ("Read 4 files, searched 2 patterns");
- * - changes (writes, edits), failures, anything waiting for the user, and sub-agents never fold:
- *   each gets a line of its own;
- * - the model's last text, written after its last tool call, is the answer.
- * A grind loop that runs for hours is one turn, so this is what keeps it readable.
+ * Groups one agent turn (everything between two real user messages) into a work part that folds
+ * into one line, and an always-visible final answer, the way claude.ai shows a turn. Opened, the
+ * work is a flat list of one-line steps (thinking, the model's text, each tool call), each of
+ * which opens on its own. Only the model's last text, written after its last tool call, is the
+ * answer.
  */
 
 export interface DisplayedEntry {
@@ -28,6 +24,8 @@ export interface DisplayedEntry {
 export interface TurnStats {
   /** Seconds from the turn's first assistant message to its last message. */
   durationS: number;
+  /** When the turn's first assistant message was created (epoch seconds), for a live timer. */
+  startedAt: number;
   toolCalls: number;
   failedToolCalls: number;
   hasThinking: boolean;
@@ -37,29 +35,8 @@ export interface TurnStats {
   activity: string | null;
 }
 
-/** What a looking-around call did, for a folded group's summary line. */
+/** What a tool call did, for its one-line row. */
 export type StepKind = 'read' | 'search' | 'list' | 'fetch' | 'command' | 'tool';
-
-export type StepCounts = Partial<Record<StepKind, number>>;
-
-/** Why a step is shown on its own line instead of folding into a group. */
-export type StandoutReason = 'attention' | 'failed' | 'write' | 'agent';
-
-export type WorkBlock =
-  /** Text the model wrote between steps (with the calls of that same message): always visible. */
-  | { kind: 'text'; key: string; entries: DisplayedEntry[] }
-  /** A run of looking-around calls and thinking, folded into one summary line. */
-  | {
-      kind: 'steps';
-      key: string;
-      entries: DisplayedEntry[];
-      counts: StepCounts;
-      thinking: boolean;
-      /** The latest call in the run, for the live status line. */
-      activity: string | null;
-    }
-  /** A step that must stay in view on its own line. */
-  | { kind: 'standout'; key: string; entries: DisplayedEntry[]; reason: StandoutReason };
 
 export type DisplayGroup =
   | { kind: 'single'; entry: DisplayedEntry }
@@ -67,8 +44,6 @@ export type DisplayGroup =
       kind: 'turn';
       key: string;
       work: DisplayedEntry[];
-      /** The work, split into blocks for display. */
-      blocks: WorkBlock[];
       final: DisplayedEntry | null;
       /** The final message's thinking, shown at the end of the work part. */
       finalThinking: string | null;
@@ -108,6 +83,26 @@ function shortToolName(name: string): string {
 }
 
 const ACTIVITY_ARG_KEYS = ['command', 'path', 'file_path', 'query', 'pattern', 'url', 'name'];
+
+/** The call's most telling argument (command, path, query...) on one line, or null. */
+export function toolCallTarget(toolCall: unknown): string | null {
+  const call = unwrapToolCall(toolCall);
+  if (!call) return null;
+  for (const key of ACTIVITY_ARG_KEYS) {
+    const value = call.arguments[key];
+    if (typeof value === 'string' && value.trim()) {
+      const oneLine = value.replace(/\s+/g, ' ').trim();
+      return oneLine.length > 120 ? oneLine.slice(0, 120) + '…' : oneLine;
+    }
+  }
+  return null;
+}
+
+/** The tool's own name without its extension prefix. */
+export function toolCallName(toolCall: unknown): string | null {
+  const call = unwrapToolCall(toolCall);
+  return call ? shortToolName(call.name) : null;
+}
 
 export function describeToolCall(toolCall: unknown): string | null {
   const call = unwrapToolCall(toolCall);
@@ -166,7 +161,7 @@ export function classifyToolCall(toolCall: unknown): StepKind | 'write' | 'agent
   return 'tool';
 }
 
-function isFailedResult(toolResult: unknown): boolean {
+export function isFailedResult(toolResult: unknown): boolean {
   const result = toolResult as Record<string, unknown> | undefined;
   if (!result) return false;
   if (result.status === 'error') return true;
@@ -242,109 +237,19 @@ function buildTurn(
       kind: 'turn',
       key: `turn-${entries[0].message.id ?? entries[0].index}`,
       work,
-      blocks: splitIntoBlocks(work, rowContexts, pendingConfirmationIds),
       final,
       finalThinking,
-      stats: { durationS, toolCalls, failedToolCalls, hasThinking, needsAttention, activity },
+      stats: {
+        durationS,
+        startedAt: firstAssistant.message.created,
+        toolCalls,
+        failedToolCalls,
+        hasThinking,
+        needsAttention,
+        activity,
+      },
     },
   ];
-}
-
-function hasNarration(message: Message): boolean {
-  if (message.role !== 'assistant') return false;
-  const { textContent, imagePaths } = getTextAndImageContent(message);
-  return textContent.trim().length > 0 || imagePaths.length > 0;
-}
-
-/** Why this message's step must stay in view, or null when it can fold into a group. */
-function standoutReason(
-  { message, index }: DisplayedEntry,
-  rowContexts: readonly MessageRowContext[],
-  pendingConfirmationIds: ReadonlySet<string>
-): StandoutReason | null {
-  const confirmation = getAnyToolConfirmationData(message);
-  if (confirmation && pendingConfirmationIds.has(confirmation.id)) return 'attention';
-  const elicitation = getElicitationContent(message);
-  if (elicitation) return 'attention';
-  const requests = getToolRequests(message);
-  const states = rowContexts[index]?.toolStates ?? [];
-  if (states.some((state) => state?.isPending)) return 'attention';
-  if (states.some((state) => state?.response && isFailedResult(state.response.toolResult))) {
-    return 'failed';
-  }
-  const kinds = requests.map((request) => classifyToolCall(request.toolCall));
-  if (kinds.includes('write')) return 'write';
-  if (kinds.includes('agent')) return 'agent';
-  return null;
-}
-
-/**
- * Splits a turn's work into blocks. Tool-result messages stay with the block of the call they
- * answer. Text written between steps starts a new block, so a long turn reads as what the model
- * said it was doing, with the folded steps under each part.
- */
-export function splitIntoBlocks(
-  work: readonly DisplayedEntry[],
-  rowContexts: readonly MessageRowContext[],
-  pendingConfirmationIds: ReadonlySet<string>
-): WorkBlock[] {
-  const blocks: WorkBlock[] = [];
-  const keyOf = (entry: DisplayedEntry) => `block-${entry.message.id ?? entry.index}`;
-
-  for (const entry of work) {
-    const { message } = entry;
-    const lastBlock = blocks[blocks.length - 1];
-
-    // A tool result belongs with the call it answers, whatever block that is in.
-    if (message.role === 'user' && isToolResponseOnly(message)) {
-      if (lastBlock) {
-        lastBlock.entries.push(entry);
-      } else {
-        blocks.push({
-          kind: 'steps',
-          key: keyOf(entry),
-          entries: [entry],
-          counts: {},
-          thinking: false,
-          activity: null,
-        });
-      }
-      continue;
-    }
-
-    if (hasNarration(message)) {
-      blocks.push({ kind: 'text', key: keyOf(entry), entries: [entry] });
-      continue;
-    }
-
-    const reason = standoutReason(entry, rowContexts, pendingConfirmationIds);
-    if (reason) {
-      blocks.push({ kind: 'standout', key: keyOf(entry), entries: [entry], reason });
-      continue;
-    }
-
-    let group = lastBlock?.kind === 'steps' ? lastBlock : null;
-    if (!group) {
-      group = {
-        kind: 'steps',
-        key: keyOf(entry),
-        entries: [],
-        counts: {},
-        thinking: false,
-        activity: null,
-      };
-      blocks.push(group);
-    }
-    group.entries.push(entry);
-    if (getThinkingContent(message) !== null) group.thinking = true;
-    for (const request of getToolRequests(message)) {
-      const kind = classifyToolCall(request.toolCall) as StepKind;
-      group.counts[kind] = (group.counts[kind] ?? 0) + 1;
-      group.activity = describeToolCall(request.toolCall) ?? group.activity;
-    }
-  }
-
-  return blocks;
 }
 
 export function groupIntoTurns(

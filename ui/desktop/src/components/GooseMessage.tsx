@@ -5,6 +5,13 @@ import { formatMessageTimestamp } from '../utils/timeUtils';
 import MarkdownContent from './MarkdownContent';
 import ThinkingContent from './ThinkingContent';
 import ToolCallWithResponse from './ToolCallWithResponse';
+import { CompactStepRow, CompactTextRow, useStepLabel } from './CompactStepRow';
+import {
+  classifyToolCall,
+  isFailedResult,
+  toolCallName,
+  toolCallTarget,
+} from '../utils/turnGrouping';
 import {
   getTextAndImageContent,
   getThinkingContent,
@@ -40,6 +47,10 @@ interface GooseMessageProps {
   isStreaming: boolean;
   /** The turn's work section shows this message's thinking instead (see TurnWorkSection). */
   hideThinking?: boolean;
+  /** Inside a turn's work section: every step on one line, opened one at a time. */
+  compact?: boolean;
+  /** With compact: show only the tool calls that failed. */
+  onlyFailed?: boolean;
   submitElicitationResponse?: (
     elicitationId: string,
     userData: Record<string, unknown>
@@ -56,9 +67,12 @@ function GooseMessage({
   append,
   isStreaming,
   hideThinking = false,
+  compact = false,
+  onlyFailed = false,
   submitElicitationResponse,
 }: GooseMessageProps) {
   const contentRef = useRef<HTMLDivElement | null>(null);
+  const stepLabel = useStepLabel();
 
   const outputTokenLimitReached = message.metadata.outputTokenLimitReached === true;
   const isOutputTokenLimitFallback =
@@ -99,6 +113,89 @@ function GooseMessage({
           isCancelled?: boolean;
         })
       : undefined;
+
+  const renderToolCall = (toolRequest: (typeof toolRequests)[number], toolIndex: number) => {
+    const toolState = toolStates[toolIndex];
+    const hasResponse = toolState.response !== undefined;
+    const isApprovalClicked = Boolean(
+      toolState.confirmation && !toolState.isPending && hasResponse
+    );
+    return (
+      <ToolCallWithResponse
+        sessionId={sessionId}
+        isCancelledMessage={false}
+        toolRequest={toolRequest}
+        toolResponse={toolState.response}
+        notifications={toolNotifications[toolIndex]}
+        isStreamingMessage={isStreaming}
+        isPendingApproval={toolState.isPending}
+        append={append}
+        confirmationContent={toolState.confirmation}
+        isApprovalClicked={isApprovalClicked}
+      />
+    );
+  };
+
+  if (compact) {
+    const thinkingRunning =
+      isStreaming && !displayText.trim() && imagePaths.length === 0 && toolRequests.length === 0;
+    return (
+      <div className="goose-message flex w-[90%] flex-col min-w-0">
+        {thinkingContent && !onlyFailed && (
+          <CompactStepRow label={stepLabel('thinking')} running={thinkingRunning}>
+            <div className="text-sm text-text-secondary">
+              <MarkdownContent content={thinkingContent} />
+            </div>
+          </CompactStepRow>
+        )}
+        {displayText.trim() && !onlyFailed && <CompactTextRow text={displayText} />}
+        {toolRequests.map((toolRequest, toolIndex) => {
+          const toolState = toolStates[toolIndex];
+          const failed = Boolean(
+            toolState.response && isFailedResult(toolState.response.toolResult)
+          );
+          if (onlyFailed && !failed) return null;
+          // Waiting for the user: show it in full so the buttons are right there.
+          if (toolState.isPending) {
+            return (
+              <div className="goose-message-tool my-2" key={toolRequest.id}>
+                {renderToolCall(toolRequest, toolIndex)}
+              </div>
+            );
+          }
+          return (
+            <CompactStepRow
+              key={toolRequest.id}
+              label={stepLabel(
+                classifyToolCall(toolRequest.toolCall),
+                toolCallName(toolRequest.toolCall)
+              )}
+              detail={toolCallTarget(toolRequest.toolCall)}
+              failed={failed}
+              running={isStreaming && !toolState.response}
+            >
+              {renderToolCall(toolRequest, toolIndex)}
+            </CompactStepRow>
+          );
+        })}
+        {!onlyFailed && hasToolConfirmation && !toolConfirmationShownInline && (
+          <ToolCallConfirmation
+            sessionId={sessionId}
+            isClicked={false}
+            actionRequiredContent={toolConfirmationContent}
+          />
+        )}
+        {!onlyFailed && hasElicitation && submitElicitationResponse && (
+          <ElicitationRequest
+            isCancelledMessage={elicitationData?.isCancelled === true}
+            isClicked={elicitationData?.isSubmitted === true}
+            actionRequiredContent={elicitationContent}
+            onSubmit={submitElicitationResponse}
+          />
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="goose-message flex w-[90%] justify-start min-w-0">
@@ -183,29 +280,11 @@ function GooseMessage({
           <div className={cn(displayText && 'mt-2')}>
             <div className="relative flex flex-col w-full group">
               <div className="flex flex-col gap-3">
-                {toolRequests.map((toolRequest, toolIndex) => {
-                  const toolState = toolStates[toolIndex];
-                  const hasResponse = toolState.response !== undefined;
-                  const isApprovalClicked = Boolean(
-                    toolState.confirmation && !toolState.isPending && hasResponse
-                  );
-                  return (
-                    <div className="goose-message-tool" key={toolRequest.id}>
-                      <ToolCallWithResponse
-                        sessionId={sessionId}
-                        isCancelledMessage={false}
-                        toolRequest={toolRequest}
-                        toolResponse={toolState.response}
-                        notifications={toolNotifications[toolIndex]}
-                        isStreamingMessage={isStreaming}
-                        isPendingApproval={toolState.isPending}
-                        append={append}
-                        confirmationContent={toolState.confirmation}
-                        isApprovalClicked={isApprovalClicked}
-                      />
-                    </div>
-                  );
-                })}
+                {toolRequests.map((toolRequest, toolIndex) => (
+                  <div className="goose-message-tool" key={toolRequest.id}>
+                    {renderToolCall(toolRequest, toolIndex)}
+                  </div>
+                ))}
               </div>
               <div className="flex items-center justify-between">
                 <div

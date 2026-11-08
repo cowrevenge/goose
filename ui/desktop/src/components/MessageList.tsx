@@ -4,8 +4,8 @@ import { defineMessages, useIntl } from '../i18n';
 import GooseMessage from './GooseMessage';
 import UserMessage from './UserMessage';
 import ThinkingContent from './ThinkingContent';
-import TurnStepsGroup from './TurnStepsGroup';
-import { StepsStartCollapsedContext } from './turnWorkContext';
+import { AlertTriangle } from 'lucide-react';
+import TurnWorkSection from './TurnWorkSection';
 import {
   SystemNotificationInline,
   getInlineSystemNotification,
@@ -21,7 +21,7 @@ import {
   type NotificationEvent,
   type SystemNotificationContent,
 } from '../types/message';
-import { groupIntoTurns, type DisplayedEntry } from '../utils/turnGrouping';
+import { groupIntoTurns, isFailedResult, type DisplayedEntry } from '../utils/turnGrouping';
 import { getModelDisplayName } from './settings/models/predefinedModelsUtils';
 import {
   deriveMessageRowContexts,
@@ -32,6 +32,12 @@ import {
 } from './messageRowContext';
 
 const i18n = defineMessages({
+  failedCalls: {
+    id: 'messageList.failedCalls',
+    defaultMessage: '{count, plural, one {# failed call} other {# failed calls}}',
+  },
+  showOnlyErrors: { id: 'messageList.showOnlyErrors', defaultMessage: 'Show only errors' },
+  showEverything: { id: 'messageList.showEverything', defaultMessage: 'Show everything' },
   modelChanged: {
     id: 'messageList.modelChanged',
     defaultMessage: 'Model changed: {previousModel} → {currentModel}',
@@ -77,6 +83,10 @@ interface MessageRowProps {
   isStreaming: boolean;
   isUser: boolean;
   hideThinking?: boolean;
+  /** Inside a turn's work section: one line per step. */
+  compact?: boolean;
+  /** With compact: only the tool calls that failed. */
+  onlyFailed?: boolean;
   message: Message;
   modelChangeMessage: string | null;
   onMessageUpdate?: (
@@ -100,6 +110,8 @@ function MessageRowComponent({
   isStreaming,
   isUser,
   hideThinking,
+  compact = false,
+  onlyFailed = false,
   message,
   modelChangeMessage,
   onMessageUpdate,
@@ -134,7 +146,7 @@ function MessageRowComponent({
         />
       )}
       <div
-        className={`relative ${index === 0 ? 'mt-0' : 'mt-4'} ${isUser ? 'user' : 'assistant'} ${rowContext.isInToolCallChain ? 'in-chain' : ''}`}
+        className={`relative ${index === 0 || compact ? 'mt-0' : 'mt-4'} ${isUser ? 'user' : 'assistant'} ${rowContext.isInToolCallChain ? 'in-chain' : ''}`}
         data-testid="message-container"
       >
         {isUser ? (
@@ -152,6 +164,8 @@ function MessageRowComponent({
             append={append}
             isStreaming={isStreaming}
             hideThinking={hideThinking}
+            compact={compact}
+            onlyFailed={onlyFailed}
             submitElicitationResponse={submitElicitationResponse}
           />
         )}
@@ -195,6 +209,8 @@ export default function MessageList({
 }: MessageListProps) {
   const intl = useIntl();
   const [showAllMessages, setShowAllMessages] = useState(false);
+  // Every failed tool call in the session, in place, so they can be tracked down one by one.
+  const [errorsOnly, setErrorsOnly] = useState(false);
   const visibleMessages = useMemo(
     () =>
       messages.flatMap((message, index) =>
@@ -248,22 +264,49 @@ export default function MessageList({
       ? getModelDisplayName(model.id)
       : intl.formatMessage(i18n.requestedModel, { model: getModelDisplayName(model.id) });
 
-  // One agent turn spans many messages (assistant turns and tool-result messages); split it into
-  // blocks so the model's text and every change stay in view and only looking-around steps fold.
+  const failedCallCount = useMemo(
+    () =>
+      rowContexts.reduce(
+        (count, context) =>
+          count +
+          context.toolStates.filter(
+            (state) => state.response && isFailedResult(state.response.toolResult)
+          ).length,
+        0
+      ),
+    [rowContexts]
+  );
+  const showingErrors = errorsOnly && failedCallCount > 0;
+
+  // One agent turn spans many messages (assistant turns and tool-result messages); group them so
+  // the work folds into one line and only the final answer stays in view. The errors view looks
+  // at the whole session, not only the messages the long-chat limit shows.
+  const groupedMessages = showingErrors ? visibleMessages : displayedMessages;
   const groups = useMemo(
     () =>
-      groupIntoTurns(displayedMessages, {
+      groupIntoTurns(groupedMessages, {
         isUserMessage,
         isNotification: (message) => getSystemNotification(message) !== undefined,
         rowContexts,
         pendingConfirmationIds,
-        breakBefore: hiddenMessageCount > 0 ? new Set([HEAD_MESSAGE_COUNT]) : undefined,
+        breakBefore:
+          !showingErrors && hiddenMessageCount > 0 ? new Set([HEAD_MESSAGE_COUNT]) : undefined,
       }),
-    [displayedMessages, isUserMessage, rowContexts, pendingConfirmationIds, hiddenMessageCount]
+    [
+      groupedMessages,
+      isUserMessage,
+      rowContexts,
+      pendingConfirmationIds,
+      hiddenMessageCount,
+      showingErrors,
+    ]
   );
   const lastMessageIndex = messages.length - 1;
 
-  const renderRow = ({ message, index }: DisplayedEntry, hideThinking = false) => {
+  const renderRow = (
+    { message, index }: DisplayedEntry,
+    { hideThinking = false, compact = false, onlyFailed = false } = {}
+  ) => {
     const isUser = isUserMessage(message);
     const messageIdentifier = message.id ?? `msg-${index}-${message.created}`;
     const messageKey = getSystemNotification(message)
@@ -296,6 +339,8 @@ export default function MessageList({
         }
         isUser={isUser}
         hideThinking={hideThinking}
+        compact={compact}
+        onlyFailed={onlyFailed}
         message={message}
         modelChangeMessage={modelChangeMessage}
         onMessageUpdate={onMessageUpdate}
@@ -328,9 +373,43 @@ export default function MessageList({
     );
   };
   const firstTailIndex =
-    hiddenMessageCount > 0 ? displayedMessages[HEAD_MESSAGE_COUNT]?.index : undefined;
+    !showingErrors && hiddenMessageCount > 0
+      ? displayedMessages[HEAD_MESSAGE_COUNT]?.index
+      : undefined;
+
+  if (failedCallCount > 0) {
+    messageRows.push(
+      <div
+        key="errors-filter"
+        className="sticky top-0 z-10 mb-2 flex items-center gap-2 text-xs text-text-secondary"
+      >
+        <button
+          type="button"
+          data-testid="errors-only-toggle"
+          aria-pressed={showingErrors}
+          onClick={() => setErrorsOnly((value) => !value)}
+          className={`flex items-center gap-1 rounded border px-2 py-0.5 transition-colors ${
+            showingErrors
+              ? 'border-red-500 bg-red-500/10 text-red-500'
+              : 'border-border-subtle bg-background-primary hover:text-text-primary'
+          }`}
+        >
+          <AlertTriangle className="h-3 w-3 text-red-500" />
+          {intl.formatMessage(i18n.failedCalls, { count: failedCallCount })}
+          <span className="opacity-70">
+            · {intl.formatMessage(showingErrors ? i18n.showEverything : i18n.showOnlyErrors)}
+          </span>
+        </button>
+      </div>
+    );
+  }
 
   for (const group of groups) {
+    // Errors view: only the turns that have a failed call, opened, showing just those calls.
+    if (showingErrors && (group.kind === 'single' || group.stats.failedToolCalls === 0)) {
+      continue;
+    }
+
     const firstIndex =
       group.kind === 'single' ? group.entry.index : (group.work[0] ?? group.final)!.index;
     if (!hiddenMarkerAdded && firstTailIndex !== undefined && firstIndex >= firstTailIndex) {
@@ -346,43 +425,25 @@ export default function MessageList({
     const turnIsStreaming =
       isStreamingMessage && turnEntries[turnEntries.length - 1].index === lastMessageIndex;
 
-    const lastBlock = group.blocks[group.blocks.length - 1];
     messageRows.push(
       <div key={group.key} className="relative mt-4 assistant">
-        {group.blocks.map((block) => {
-          if (block.kind === 'steps') {
-            return (
-              <TurnStepsGroup
-                key={block.key}
-                counts={block.counts}
-                thinking={block.thinking}
-                live={turnIsStreaming && !group.final && block === lastBlock}
-                activity={block.activity}
-              >
-                {block.entries.map((entry) => renderRow(entry))}
-              </TurnStepsGroup>
-            );
-          }
-          // Text and stand-out steps stay in view; their tool calls show as one line each. A step
-          // waiting for the user shows in full so its buttons are right there.
-          return (
-            <StepsStartCollapsedContext.Provider
-              key={block.key}
-              value={!(block.kind === 'standout' && block.reason === 'attention')}
-            >
-              {block.entries.map((entry) => renderRow(entry))}
-            </StepsStartCollapsedContext.Provider>
-          );
-        })}
-        {group.finalThinking && (
-          <div className="mt-2">
+        <TurnWorkSection
+          stats={group.stats}
+          isStreaming={turnIsStreaming}
+          hasFinal={group.final !== null}
+          forceOpen={showingErrors}
+        >
+          {group.work.map((entry) =>
+            renderRow(entry, { compact: true, onlyFailed: showingErrors })
+          )}
+          {group.finalThinking && !showingErrors && (
             <ThinkingContent content={group.finalThinking} isExpanded={false} />
-          </div>
-        )}
+          )}
+        </TurnWorkSection>
       </div>
     );
-    if (group.final) {
-      messageRows.push(renderRow(group.final, true));
+    if (group.final && !showingErrors) {
+      messageRows.push(renderRow(group.final, { hideThinking: true }));
     }
   }
 

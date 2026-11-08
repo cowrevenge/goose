@@ -263,6 +263,33 @@
   "chatSettings.responseStylesTitle": {
     "defaultMessage": "Response Styles"
   },
+  "compactStep.agent": {
+    "defaultMessage": "Ran a sub-agent"
+  },
+  "compactStep.command": {
+    "defaultMessage": "Ran a command"
+  },
+  "compactStep.fetch": {
+    "defaultMessage": "Fetched a page"
+  },
+  "compactStep.list": {
+    "defaultMessage": "Listed a folder"
+  },
+  "compactStep.read": {
+    "defaultMessage": "Read a file"
+  },
+  "compactStep.search": {
+    "defaultMessage": "Searched"
+  },
+  "compactStep.thinking": {
+    "defaultMessage": "Thinking"
+  },
+  "compactStep.tool": {
+    "defaultMessage": "Used {tool}"
+  },
+  "compactStep.write": {
+    "defaultMessage": "Edited a file"
+  },
   "configSettings.configReset": {
     "defaultMessage": "Configuration Reset"
   },
@@ -2054,6 +2081,9 @@
   "messageCopyLink.copy": {
     "defaultMessage": "Copy"
   },
+  "messageList.failedCalls": {
+    "defaultMessage": "{count,plural,one{# failed call} other{# failed calls}}"
+  },
   "messageList.hiddenMessages": {
     "defaultMessage": "{count,plural,one{# message hidden} other{# messages hidden}}"
   },
@@ -2065,6 +2095,12 @@
   },
   "messageList.showAllMessages": {
     "defaultMessage": "Show all"
+  },
+  "messageList.showEverything": {
+    "defaultMessage": "Show everything"
+  },
+  "messageList.showOnlyErrors": {
+    "defaultMessage": "Show only errors"
   },
   "messageQueue.cancel": {
     "defaultMessage": "Cancel"
@@ -4745,28 +4781,25 @@
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "Goose would like to call {toolName}. Allow?"
   },
-  "turnSteps.command": {
-    "defaultMessage": "{count,plural,one{ran # command} other{ran # commands}}"
+  "turnWork.failed": {
+    "defaultMessage": "{count} failed"
   },
-  "turnSteps.fetch": {
-    "defaultMessage": "{count,plural,one{fetched # page} other{fetched # pages}}"
+  "turnWork.needsAttention": {
+    "defaultMessage": "Waiting for you"
   },
-  "turnSteps.list": {
-    "defaultMessage": "{count,plural,one{listed # folder} other{listed # folders}}"
+  "turnWork.noAnswer": {
+    "defaultMessage": "Ended without a final answer"
   },
-  "turnSteps.read": {
-    "defaultMessage": "{count,plural,one{read # file} other{read # files}}"
+  "turnWork.thought": {
+    "defaultMessage": "Thought for {duration}"
   },
-  "turnSteps.search": {
-    "defaultMessage": "{count,plural,one{searched # time} other{searched # times}}"
+  "turnWork.toolCalls": {
+    "defaultMessage": "{count,plural,one{# tool call} other{# tool calls}}"
   },
-  "turnSteps.thought": {
-    "defaultMessage": "thought"
+  "turnWork.worked": {
+    "defaultMessage": "Worked for {duration}"
   },
-  "turnSteps.tool": {
-    "defaultMessage": "{count,plural,one{used # tool} other{used # tools}}"
-  },
-  "turnSteps.working": {
+  "turnWork.working": {
     "defaultMessage": "Working"
   },
   "updateSection.autoDownload": {
