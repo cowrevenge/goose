@@ -72,7 +72,10 @@ impl CompactionOperation {
 
     async fn context_tokens(&self, session: &Session, conversation: &Conversation) -> Result<i32> {
         match session.usage.total_tokens {
-            Some(tokens) => Ok(tokens + unreported_tool_tokens(conversation).await?),
+            Some(tokens) => Ok(i32::try_from(
+                tokens + i64::from(unreported_tool_tokens(conversation).await?),
+            )
+            .unwrap_or(i32::MAX)),
             None => count_context_tokens(conversation.messages()).await,
         }
     }

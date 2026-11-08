@@ -212,7 +212,7 @@ pub async fn compact_messages(
         Ok(tokens) => tokens,
         Err(error) => {
             warn!("Failed to count retained context tokens, using billable output tokens: {error}");
-            summarization_usage.usage.output_tokens.unwrap_or(0)
+            i32::try_from(summarization_usage.usage.output_tokens.unwrap_or(0)).unwrap_or(i32::MAX)
         }
     };
 

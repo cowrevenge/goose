@@ -141,8 +141,8 @@ pub(super) struct ApiCall {
 }
 
 impl ApiCall {
-    pub(super) fn input_tokens(&self) -> i32 {
-        serialized_chars(&self.body)
+    pub(super) fn input_tokens(&self) -> i64 {
+        i64::from(serialized_chars(&self.body))
     }
 
     pub(super) fn session_id(&self) -> Option<&str> {

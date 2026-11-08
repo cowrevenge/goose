@@ -2758,7 +2758,7 @@ impl SessionStorage {
             }
         }
 
-        let opt = |v: i64| Some(i32::try_from(v).unwrap_or(i32::MAX));
+        let opt = |v: i64| Some(v);
         Ok(SessionUsageTotals {
             accumulated_usage: Usage::new(opt(input), opt(output), opt(total))
                 .with_cache_tokens(opt(cache_read), opt(cache_write)),
@@ -4698,6 +4698,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn session_lifetime_tokens_past_i32_max_still_load_and_list() {
+        // A long-running agent loop pushed one session's accumulated_total_tokens past
+        // 2,147,483,647. Read back as 32-bit, that row failed to decode and took the whole
+        // session list down with it.
+        let temp_dir = TempDir::new().unwrap();
+        let sm = SessionManager::new(temp_dir.path().to_path_buf());
+        let session = sm
+            .create_session(
+                PathBuf::from("/tmp/long-loop"),
+                "Long loop".to_string(),
+                SessionType::User,
+                GooseMode::default(),
+            )
+            .await
+            .unwrap();
+
+        let huge = i64::from(i32::MAX) + 212_233;
+        let accumulated = Usage::new(Some(huge - 1_000), Some(1_000), Some(huge))
+            .with_cache_tokens(Some(huge - 5_000), None);
+        sm.update(&session.id)
+            .accumulated_usage(accumulated)
+            .apply()
+            .await
+            .unwrap();
+        // A further turn adds on top in SQL; the total must keep growing, not wrap or clamp.
+        sm.record_usage_metrics(
+            &session.id,
+            None,
+            Usage::new(Some(10), Some(5), Some(15)),
+            "test-model",
+            &message_usage(10, 5, 0.0, false),
+        )
+        .await
+        .unwrap();
+
+        let loaded = sm.get_session(&session.id, false).await.unwrap();
+        assert_eq!(loaded.accumulated_usage.total_tokens, Some(huge + 15));
+
+        let listed = sm.list_sessions().await.unwrap();
+        assert!(listed.iter().any(|s| s.id == session.id));
+    }
+
+    #[tokio::test]
     async fn test_concurrent_session_creation() {
         let temp_dir = TempDir::new().unwrap();
         let session_manager = Arc::new(SessionManager::new(temp_dir.path().to_path_buf()));
@@ -4748,14 +4791,14 @@ mod tests {
 
                 sm.update(&session.id)
                     .user_provided_name(format!("Updated session {}", i))
-                    .usage(Usage::new(None, None, Some(100 * i)))
+                    .usage(Usage::new(None, None, Some(100 * i64::from(i))))
                     .apply()
                     .await
                     .unwrap();
 
                 let updated = sm.get_session(&session.id, true).await.unwrap();
                 assert_eq!(updated.message_count, 2);
-                assert_eq!(updated.usage.total_tokens, Some(100 * i));
+                assert_eq!(updated.usage.total_tokens, Some(100 * i64::from(i)));
 
                 session.id
             });
@@ -5189,7 +5232,7 @@ mod tests {
         assert_eq!(loaded.accumulated_usage, accumulated_usage);
     }
 
-    fn message_usage(input: i32, output: i32, cost: f64, is_compaction: bool) -> MessageUsage {
+    fn message_usage(input: i64, output: i64, cost: f64, is_compaction: bool) -> MessageUsage {
         MessageUsage {
             input_tokens: Some(input),
             output_tokens: Some(output),

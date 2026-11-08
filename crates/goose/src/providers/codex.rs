@@ -286,19 +286,19 @@ impl CodexProvider {
             usage.input_tokens = usage_info
                 .get("input_tokens")
                 .and_then(|v| v.as_i64())
-                .map(|v| v as i32);
+                .map(|v| v as i64);
         }
         if usage.output_tokens.is_none() {
             usage.output_tokens = usage_info
                 .get("output_tokens")
                 .and_then(|v| v.as_i64())
-                .map(|v| v as i32);
+                .map(|v| v as i64);
         }
         if usage.cache_read_input_tokens.is_none() {
             usage.cache_read_input_tokens = usage_info
                 .get("cached_input_tokens")
                 .and_then(|v| v.as_i64())
-                .map(|v| v as i32);
+                .map(|v| v as i64);
         }
     }
 

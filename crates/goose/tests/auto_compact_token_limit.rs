@@ -149,7 +149,11 @@ async fn verify_reply(
         .config
         .session_manager
         .update(session_id)
-        .usage(Usage::new(Some(tokens), Some(0), Some(tokens)))
+        .usage(Usage::new(
+            Some(i64::from(tokens)),
+            Some(0),
+            Some(i64::from(tokens)),
+        ))
         .apply()
         .await?;
     let stream = agent

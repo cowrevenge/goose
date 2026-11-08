@@ -253,12 +253,12 @@ pub fn convert(content: &str) -> Result<String> {
         created_at,
         updated_at,
         usage: Usage::new(
-            (total_input > 0).then_some(total_input as i32),
-            (total_output > 0).then_some(total_output as i32),
+            (total_input > 0).then_some(total_input as i64),
+            (total_output > 0).then_some(total_output as i64),
             None,
         )
         .with_cache_tokens(
-            (total_cache_read > 0).then_some(total_cache_read as i32),
+            (total_cache_read > 0).then_some(total_cache_read as i64),
             None,
         ),
         accumulated_cost: None,

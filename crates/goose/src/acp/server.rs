@@ -688,7 +688,13 @@ fn builtin_to_extension_config(name: &str) -> ExtensionConfig {
     }
 }
 
-fn to_nonnegative_u64(value: Option<i32>) -> Option<u64> {
+/// One message's token count, for the client's 32-bit field. A single request never comes near
+/// i32::MAX; only session lifetime totals do, and those stay 64-bit.
+fn per_message_tokens(value: Option<i64>) -> Option<i32> {
+    value.map(|v| i32::try_from(v).unwrap_or(i32::MAX))
+}
+
+fn to_nonnegative_u64(value: Option<i64>) -> Option<u64> {
     value.and_then(|v| u64::try_from(v).ok())
 }
 
@@ -1670,11 +1676,11 @@ fn message_usage_update(
     MessageUsageUpdate {
         message_id,
         usage: MessageUsageData {
-            input_tokens: usage.input_tokens,
-            output_tokens: usage.output_tokens,
-            total_tokens: usage.total_tokens,
-            cache_read_tokens: usage.cache_read_tokens,
-            cache_write_tokens: usage.cache_write_tokens,
+            input_tokens: per_message_tokens(usage.input_tokens),
+            output_tokens: per_message_tokens(usage.output_tokens),
+            total_tokens: per_message_tokens(usage.total_tokens),
+            cache_read_tokens: per_message_tokens(usage.cache_read_tokens),
+            cache_write_tokens: per_message_tokens(usage.cache_write_tokens),
             cost: usage.cost,
             cost_source: usage.cost_source.map(|source| match source {
                 CostSource::ProviderReported => CostSourceData::ProviderReported,

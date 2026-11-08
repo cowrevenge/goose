@@ -963,13 +963,13 @@ pub fn get_usage(usage: &Value) -> Usage {
         .get("prompt_tokens")
         .and_then(|v| v.as_i64())
         .or_else(|| usage.get("prompt_eval_count").and_then(|v| v.as_i64()))
-        .map(|v| v as i32);
+        .map(|v| v as i64);
 
     let output_tokens = usage
         .get("completion_tokens")
         .and_then(|v| v.as_i64())
         .or_else(|| usage.get("eval_count").and_then(|v| v.as_i64()))
-        .map(|v| v as i32);
+        .map(|v| v as i64);
 
     let cache_read_input_tokens = usage
         .get("cache_read_input_tokens")
@@ -980,7 +980,7 @@ pub fn get_usage(usage: &Value) -> Usage {
                 .and_then(|d| d.get("cached_tokens"))
                 .and_then(|v| v.as_i64())
         })
-        .map(|v| v as i32);
+        .map(|v| v as i64);
 
     let cache_write_input_tokens = usage
         .get("cache_creation_input_tokens")
@@ -991,12 +991,12 @@ pub fn get_usage(usage: &Value) -> Usage {
                 .and_then(|d| d.get("cache_write_tokens"))
                 .and_then(|v| v.as_i64())
         })
-        .map(|v| v as i32);
+        .map(|v| v as i64);
 
     let total_tokens = usage
         .get("total_tokens")
         .and_then(|v| v.as_i64())
-        .map(|v| v as i32)
+        .map(|v| v as i64)
         .or_else(|| match (input_tokens, output_tokens) {
             (Some(input), Some(output)) => Some(input.saturating_add(output)),
             _ => None,
@@ -2031,7 +2031,11 @@ fn preferred_reasoning_levels(effort: ThinkingEffort) -> &'static [&'static str]
 pub fn reasoning_effort_from_levels(effort: ThinkingEffort, levels: &[String]) -> Option<String> {
     preferred_reasoning_levels(effort)
         .iter()
-        .find(|level| levels.iter().any(|accepted| accepted.eq_ignore_ascii_case(level)))
+        .find(|level| {
+            levels
+                .iter()
+                .any(|accepted| accepted.eq_ignore_ascii_case(level))
+        })
         .map(|level| (*level).to_string())
 }
 
@@ -3764,9 +3768,9 @@ mod tests {
 
     fn assert_usage_yielded_once(
         result: &StreamingUsageTestResult,
-        expected_input: i32,
-        expected_output: i32,
-        expected_total: i32,
+        expected_input: i64,
+        expected_output: i64,
+        expected_total: i64,
     ) {
         assert_eq!(
             result.usage_count, 1,
