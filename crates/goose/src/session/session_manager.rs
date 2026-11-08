@@ -2435,9 +2435,43 @@ impl SessionStorage {
         Ok(sessions)
     }
 
+    /// A session whose row failed to decode, kept in the list as an error line: its name (or
+    /// "name error" when even that cannot be read) and the column error, so it is visible
+    /// instead of silently missing.
+    fn undecodable_session(row: &sqlx::sqlite::SqliteRow, error: &sqlx::Error) -> Session {
+        use sqlx::Row;
+
+        let id: String = row.try_get("id").unwrap_or_default();
+        let name = row
+            .try_get::<String, _>("name")
+            .ok()
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| "name error".to_string());
+        tracing::warn!(session_id = %id, %error, "session could not be read");
+        // user_set_name keeps it out of every "empty, unnamed session" cleanup: an error line
+        // must never get the session behind it deleted.
+        let mut session = Session {
+            id,
+            name: format!("LOAD ERROR: {name} ({error})"),
+            user_set_name: true,
+            message_count: row.try_get::<i64, _>("message_count").unwrap_or(0).max(0) as usize,
+            ..Default::default()
+        };
+        if let Ok(working_dir) = row.try_get::<String, _>("working_dir") {
+            session.working_dir = working_dir.into();
+        }
+        if let Ok(created_at) = row.try_get("created_at") {
+            session.created_at = created_at;
+        }
+        if let Ok(updated_at) = row.try_get("updated_at") {
+            session.updated_at = updated_at;
+        }
+        session
+    }
+
     /// Reads a session list. The fast path decodes every row in one query; if any row fails to
-    /// decode (a bad value in one session's columns), the list is read again row by row and only
-    /// the rows that fail are left out and logged, so one broken session cannot hide the others.
+    /// decode (a bad value in one session's columns), the list is read again row by row and each
+    /// row that fails becomes an error line, so one broken session cannot hide the others.
     async fn fetch_session_rows(
         tx: &mut sqlx::Transaction<'_, Sqlite>,
         sql: &str,
@@ -2470,10 +2504,7 @@ impl SessionStorage {
         for row in &rows {
             match <Session as sqlx::FromRow<'_, sqlx::sqlite::SqliteRow>>::from_row(row) {
                 Ok(session) => sessions.push(session),
-                Err(error) => {
-                    let id: String = row.try_get("id").unwrap_or_else(|_| "<unknown>".into());
-                    tracing::warn!(session_id = %id, %error, "session left out of the list: a column failed to decode");
-                }
+                Err(error) => sessions.push(Self::undecodable_session(row, &error)),
             }
         }
         Ok(sessions)
@@ -4789,7 +4820,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn one_undecodable_session_does_not_hide_the_rest_of_the_list() {
+    async fn one_undecodable_session_shows_as_an_error_line_not_a_failed_list() {
         let temp_dir = TempDir::new().unwrap();
         let sm = SessionManager::new(temp_dir.path().to_path_buf());
         let mut ids = Vec::new();
@@ -4821,10 +4852,29 @@ mod tests {
             .collect();
         assert!(listed.contains(&ids[0]));
         assert!(listed.contains(&ids[2]));
-        assert!(!listed.contains(&ids[1]));
+        assert!(listed.contains(&ids[1]));
+
+        let all = sm.list_sessions().await.unwrap();
+        let broken = all.iter().find(|s| s.id == ids[1]).unwrap();
+        assert!(
+            broken.name.starts_with("LOAD ERROR: broken ("),
+            "{}",
+            broken.name
+        );
+        assert!(
+            broken.name.contains("accumulated_total_tokens"),
+            "{}",
+            broken.name
+        );
+        assert!(
+            broken.user_set_name,
+            "an error line must never look like a phantom session"
+        );
+        let good = all.iter().find(|s| s.id == ids[0]).unwrap();
+        assert_eq!(good.name, "good one");
 
         let limited = sm.list_sessions_with_limit(10).await.unwrap();
-        assert_eq!(limited.len(), 2);
+        assert_eq!(limited.len(), 3);
     }
 
     #[tokio::test]
