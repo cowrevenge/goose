@@ -15,6 +15,8 @@ use super::edit::resolve_path;
 
 /// Config key (or environment variable) for the images endpoint.
 pub const IMAGE_ENDPOINT_KEY: &str = "GOOSE_IMAGE_ENDPOINT";
+/// Config key (secret, config value or environment variable) for the image server's API key, sent as a Bearer token.
+pub const IMAGE_API_KEY_KEY: &str = "GOOSE_IMAGE_API_KEY";
 const DEFAULT_IMAGE_ENDPOINT: &str = "http://127.0.0.1:8080/v1/images/generations";
 /// A full-precision model at many steps can take minutes; Strata's own job limit is an hour.
 const GENERATE_TIMEOUT: Duration = Duration::from_secs(60 * 60);
@@ -63,8 +65,15 @@ impl GenerateTool {
             .ok()
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(|| DEFAULT_IMAGE_ENDPOINT.to_string());
+        let config = crate::config::Config::global();
+        let api_key = config
+            .get_secret::<String>(IMAGE_API_KEY_KEY)
+            .or_else(|_| config.get_param::<String>(IMAGE_API_KEY_KEY))
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
         tokio::select! {
-            result = generate(&endpoint, &params, working_dir) => match result {
+            result = generate(&endpoint, api_key.as_deref(), &params, working_dir) => match result {
                 Ok(done) => done.into_result(&params.prompt),
                 Err(error) => CallToolResult::error(vec![visible_text(format!("Error: {error}"))]),
             },
@@ -117,6 +126,7 @@ impl Generated {
 
 async fn generate(
     endpoint: &str,
+    api_key: Option<&str>,
     params: &ImageGenerateParams,
     working_dir: Option<&Path>,
 ) -> Result<Generated, String> {
@@ -145,9 +155,11 @@ async fn generate(
         .timeout(GENERATE_TIMEOUT)
         .build()
         .map_err(|error| format!("failed to create HTTP client: {error}"))?;
-    let response = client
-        .post(endpoint)
-        .json(&body)
+    let mut request = client.post(endpoint).json(&body);
+    if let Some(key) = api_key {
+        request = request.bearer_auth(key);
+    }
+    let response = request
         .send()
         .await
         .map_err(|error| format!("could not reach the image server at {endpoint}: {error}"))?;
@@ -206,7 +218,7 @@ async fn generate(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wiremock::matchers::{body_partial_json, method, path};
+    use wiremock::matchers::{body_partial_json, header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     // A 1x1 PNG.
@@ -227,6 +239,7 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/v1/images/generations"))
+            .and(header("authorization", "Bearer 345!2"))
             .and(body_partial_json(json!({
                 "prompt": "a red fox in snow",
                 "size": "512x512",
@@ -246,6 +259,7 @@ mod tests {
 
         let done = generate(
             &format!("{}/v1/images/generations", server.uri()),
+            Some("345!2"),
             &params(Some("art/fox.png")),
             Some(dir.path()),
         )
@@ -275,7 +289,7 @@ mod tests {
             .await;
         let dir = tempfile::tempdir().unwrap();
 
-        let done = generate(&server.uri(), &params(None), Some(dir.path()))
+        let done = generate(&server.uri(), None, &params(None), Some(dir.path()))
             .await
             .unwrap();
 
@@ -297,7 +311,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let error = generate(&server.uri(), &params(None), None)
+        let error = generate(&server.uri(), None, &params(None), None)
             .await
             .err()
             .unwrap();
@@ -310,7 +324,7 @@ mod tests {
     async fn an_empty_prompt_never_reaches_the_server() {
         let mut p = params(None);
         p.prompt = "  ".to_string();
-        let error = generate("http://127.0.0.1:9/never", &p, None)
+        let error = generate("http://127.0.0.1:9/never", None, &p, None)
             .await
             .err()
             .unwrap();
