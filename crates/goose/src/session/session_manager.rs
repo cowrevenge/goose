@@ -387,6 +387,12 @@ pub(crate) struct SessionListPageQuery<'a> {
     pub(crate) include_last_message_snippet: bool,
 }
 
+/// A bound value of a session-list query, kept so the query can be run a second time.
+enum ListBind {
+    Text(String),
+    Int(i64),
+}
+
 #[derive(Debug, Default)]
 struct SessionListQuery<'a> {
     filters: SessionListFilters<'a>,
@@ -2397,38 +2403,80 @@ impl SessionStorage {
             limit_clause
         );
 
-        let mut q = sqlx::query_as::<_, Session>(AssertSqlSafe(sql));
+        let mut binds: Vec<ListBind> = Vec::new();
         if let Some(types) = filters.types {
             for session_type in types {
-                q = q.bind(session_type.to_string());
+                binds.push(ListBind::Text(session_type.to_string()));
             }
         }
         if let Some(working_dir) = filters.working_dir {
-            q = q.bind(working_dir.to_string_lossy().to_string());
+            binds.push(ListBind::Text(working_dir.to_string_lossy().to_string()));
         }
         for term in keywords {
-            q = q.bind(term);
+            binds.push(ListBind::Text(term));
         }
         if let Some(cursor) = query.cursor {
             let sort_at = cursor.sort_at.timestamp();
-            q = q.bind(sort_at);
-            q = q.bind(sort_at);
-            q = q.bind(&cursor.session_id);
+            binds.push(ListBind::Int(sort_at));
+            binds.push(ListBind::Int(sort_at));
+            binds.push(ListBind::Text(cursor.session_id.clone()));
         }
         if let Some(limit) = query.limit {
-            q = q.bind(limit as i64);
+            binds.push(ListBind::Int(limit as i64));
         }
 
         let pool = self.pool().await?;
+        let mut tx = pool.begin().await?;
+        let mut sessions = Self::fetch_session_rows(&mut tx, &sql, &binds).await?;
         if has_limit {
-            let mut tx = pool.begin().await?;
-            let mut sessions = q.fetch_all(&mut *tx).await?;
             Self::populate_visible_message_counts(&mut tx, &mut sessions).await?;
-            tx.commit().await?;
-            Ok(sessions)
-        } else {
-            q.fetch_all(pool).await.map_err(Into::into)
         }
+        tx.commit().await?;
+        Ok(sessions)
+    }
+
+    /// Reads a session list. The fast path decodes every row in one query; if any row fails to
+    /// decode (a bad value in one session's columns), the list is read again row by row and only
+    /// the rows that fail are left out and logged, so one broken session cannot hide the others.
+    async fn fetch_session_rows(
+        tx: &mut sqlx::Transaction<'_, Sqlite>,
+        sql: &str,
+        binds: &[ListBind],
+    ) -> Result<Vec<Session>> {
+        use sqlx::Row;
+
+        let mut fast = sqlx::query_as::<_, Session>(AssertSqlSafe(sql.to_string()));
+        for bind in binds {
+            fast = match bind {
+                ListBind::Text(v) => fast.bind(v.clone()),
+                ListBind::Int(v) => fast.bind(*v),
+            };
+        }
+        match fast.fetch_all(&mut **tx).await {
+            Ok(sessions) => return Ok(sessions),
+            Err(sqlx::Error::ColumnDecode { .. }) | Err(sqlx::Error::Decode(_)) => {}
+            Err(other) => return Err(other.into()),
+        }
+
+        let mut slow = sqlx::query(AssertSqlSafe(sql.to_string()));
+        for bind in binds {
+            slow = match bind {
+                ListBind::Text(v) => slow.bind(v.clone()),
+                ListBind::Int(v) => slow.bind(*v),
+            };
+        }
+        let rows = slow.fetch_all(&mut **tx).await?;
+        let mut sessions = Vec::with_capacity(rows.len());
+        for row in &rows {
+            match <Session as sqlx::FromRow<'_, sqlx::sqlite::SqliteRow>>::from_row(row) {
+                Ok(session) => sessions.push(session),
+                Err(error) => {
+                    let id: String = row.try_get("id").unwrap_or_else(|_| "<unknown>".into());
+                    tracing::warn!(session_id = %id, %error, "session left out of the list: a column failed to decode");
+                }
+            }
+        }
+        Ok(sessions)
     }
 
     async fn populate_visible_message_counts(
@@ -4738,6 +4786,45 @@ mod tests {
 
         let listed = sm.list_sessions().await.unwrap();
         assert!(listed.iter().any(|s| s.id == session.id));
+    }
+
+    #[tokio::test]
+    async fn one_undecodable_session_does_not_hide_the_rest_of_the_list() {
+        let temp_dir = TempDir::new().unwrap();
+        let sm = SessionManager::new(temp_dir.path().to_path_buf());
+        let mut ids = Vec::new();
+        for name in ["good one", "broken", "good two"] {
+            let session = sm
+                .create_session(
+                    PathBuf::from("/tmp/list"),
+                    name.to_string(),
+                    SessionType::User,
+                    GooseMode::default(),
+                )
+                .await
+                .unwrap();
+            ids.push(session.id);
+        }
+        // A value no Session field can decode, standing in for any bad column.
+        sqlx::query("UPDATE sessions SET accumulated_total_tokens = 'not a number' WHERE id = ?")
+            .bind(&ids[1])
+            .execute(sm.storage().pool().await.unwrap())
+            .await
+            .unwrap();
+
+        let listed: Vec<String> = sm
+            .list_sessions()
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|s| s.id)
+            .collect();
+        assert!(listed.contains(&ids[0]));
+        assert!(listed.contains(&ids[2]));
+        assert!(!listed.contains(&ids[1]));
+
+        let limited = sm.list_sessions_with_limit(10).await.unwrap();
+        assert_eq!(limited.len(), 2);
     }
 
     #[tokio::test]
