@@ -23,13 +23,16 @@ impl GooseAcpAgent {
                     .data(format!("Session not found: {}", session_id))
             })?;
 
-        let agent = self.get_session_agent(session_id).await?;
+        // Save the new folder before touching the agent: activating a session that is not loaded
+        // yet uses its stored folder, and a session whose folder was deleted or renamed could
+        // never be moved to a working one otherwise.
         self.session_manager
             .update(&session.id)
             .working_dir(path)
             .apply()
             .await
             .internal_err_ctx("Failed to update working directory")?;
+        let agent = self.get_session_agent(session_id).await?;
 
         let session = self
             .session_manager
