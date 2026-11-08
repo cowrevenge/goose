@@ -1,4 +1,5 @@
 pub mod edit;
+pub mod generate;
 pub mod image;
 pub mod read;
 pub mod shell;
@@ -11,6 +12,7 @@ use crate::agents::ToolCallContext;
 use anyhow::Result;
 use async_trait::async_trait;
 use edit::{EditTools, FileEditParams, FileWriteParams};
+use generate::{GenerateTool, ImageGenerateParams};
 use image::{ImageReadParams, ImageTool};
 use indoc::indoc;
 use read::{FileReadParams, ReadTool};
@@ -39,6 +41,7 @@ pub struct DeveloperClient {
     edit_tools: Arc<EditTools>,
     tree_tool: Arc<TreeTool>,
     image_tool: Arc<ImageTool>,
+    generate_tool: Arc<GenerateTool>,
     read_tool: Arc<ReadTool>,
 }
 
@@ -152,6 +155,7 @@ impl DeveloperClient {
             tree_tool: Arc::new(TreeTool::new()),
             image_tool: Arc::new(ImageTool::new()),
             read_tool: Arc::new(ReadTool::new()),
+            generate_tool: Arc::new(GenerateTool::new()),
         })
     }
 
@@ -246,6 +250,21 @@ impl DeveloperClient {
                 Some(true),
                 Some(true),
             )),
+            Tool::new(
+                "generate_image".to_string(),
+                "Generate an image from a text description with the local image model, save it as a PNG \
+                 (default generated-images/ in the working directory) and show it. Write the prompt like a \
+                 caption: subject, setting, style, lighting. Takes from seconds to minutes."
+                    .to_string(),
+                Self::schema::<ImageGenerateParams>(),
+            )
+            .annotate(ToolAnnotations::from_raw(
+                Some("Generate Image".to_string()),
+                Some(false),
+                Some(false),
+                Some(false),
+                Some(false),
+            )),
         ]
     }
 }
@@ -312,6 +331,15 @@ impl McpClientTrait for DeveloperClient {
                     "Error: {error}"
                 ))])),
             },
+            "generate_image" => match Self::parse_args::<ImageGenerateParams>(arguments) {
+                Ok(params) => Ok(self
+                    .generate_tool
+                    .generate_with_cwd(params, working_dir, cancel_token)
+                    .await),
+                Err(error) => Ok(CallToolResult::error(vec![visible_text(format!(
+                    "Error: {error}"
+                ))])),
+            },
             "read_image" => match Self::parse_args::<ImageReadParams>(arguments) {
                 Ok(params) => Ok(self
                     .image_tool
@@ -348,7 +376,15 @@ mod tests {
 
         assert_eq!(
             names,
-            vec!["read", "write", "edit", "shell", "tree", "read_image"]
+            vec![
+                "read",
+                "write",
+                "edit",
+                "shell",
+                "tree",
+                "read_image",
+                "generate_image"
+            ]
         );
     }
 

@@ -36,7 +36,7 @@ export interface TurnStats {
 }
 
 /** What a tool call did, for its one-line row. */
-export type StepKind = 'read' | 'search' | 'list' | 'fetch' | 'command' | 'tool';
+export type StepKind = 'read' | 'search' | 'list' | 'fetch' | 'command' | 'image' | 'tool';
 
 export type DisplayGroup =
   | { kind: 'single'; entry: DisplayedEntry }
@@ -82,7 +82,16 @@ function shortToolName(name: string): string {
   return i === -1 ? name : name.substring(i + 2);
 }
 
-const ACTIVITY_ARG_KEYS = ['command', 'path', 'file_path', 'query', 'pattern', 'url', 'name'];
+const ACTIVITY_ARG_KEYS = [
+  'command',
+  'path',
+  'file_path',
+  'query',
+  'pattern',
+  'url',
+  'name',
+  'prompt',
+];
 
 /** The call's most telling argument (command, path, query...) on one line, or null. */
 export function toolCallTarget(toolCall: unknown): string | null {
@@ -155,10 +164,33 @@ export function classifyToolCall(toolCall: unknown): StepKind | 'write' | 'agent
     return call.arguments.command === 'view' ? 'read' : 'write';
   }
   const words = name.split(/[^a-z0-9]+/).filter(Boolean);
+  // Making a picture, not reading one: checked first, as "create" alone would read as a write.
+  if (
+    words.includes('image') &&
+    words.some((word) => ['generate', 'create', 'draw', 'render', 'paint'].includes(word))
+  ) {
+    return 'image';
+  }
   for (const [kind, keywords] of STEP_KEYWORDS) {
     if (words.some((word) => keywords.includes(word))) return kind;
   }
   return 'tool';
+}
+
+/** The images in a tool's successful result (data + mimeType blocks). */
+export function toolResultImages(toolResult: unknown): { data: string; mimeType: string }[] {
+  const result = toolResult as Record<string, unknown> | undefined;
+  if (!result || result.status !== 'success') return [];
+  const content = (result.value as { content?: unknown } | undefined)?.content;
+  if (!Array.isArray(content)) return [];
+  return content.flatMap((block) => {
+    const b = block as Record<string, unknown>;
+    return typeof b.data === 'string' &&
+      typeof b.mimeType === 'string' &&
+      b.mimeType.startsWith('image/')
+      ? [{ data: b.data, mimeType: b.mimeType }]
+      : [];
+  });
 }
 
 export function isFailedResult(toolResult: unknown): boolean {

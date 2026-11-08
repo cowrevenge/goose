@@ -1,0 +1,319 @@
+//! `generate_image`: makes a picture through the local model server's OpenAI-style images endpoint
+//! (Strata's `POST /v1/images/generations`), saves the PNG next to the work and shows it in the chat.
+
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+use base64::Engine;
+use rmcp::model::{Annotations, CallToolResult, ContentBlock, TextContent};
+use schemars::JsonSchema;
+use serde::Deserialize;
+use serde_json::{json, Value};
+use tokio_util::sync::CancellationToken;
+
+use super::edit::resolve_path;
+
+/// Config key (or environment variable) for the images endpoint.
+pub const IMAGE_ENDPOINT_KEY: &str = "GOOSE_IMAGE_ENDPOINT";
+const DEFAULT_IMAGE_ENDPOINT: &str = "http://127.0.0.1:8080/v1/images/generations";
+/// A full-precision model at many steps can take minutes; Strata's own job limit is an hour.
+const GENERATE_TIMEOUT: Duration = Duration::from_secs(60 * 60);
+const DEFAULT_DIR: &str = "generated-images";
+
+fn visible_text(text: impl Into<String>) -> ContentBlock {
+    ContentBlock::Text(
+        TextContent::new(text).with_annotations(Annotations::default().with_priority(0.0)),
+    )
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ImageGenerateParams {
+    /// What the image should show. Be specific: subject, setting, style, lighting, composition.
+    pub prompt: String,
+    /// "WIDTHxHEIGHT", each side a multiple of 32 from 256 to 2048. Default 1024x1024.
+    #[serde(default)]
+    pub size: Option<String>,
+    /// Seed for a repeatable image. Default: random (the result says which was used).
+    #[serde(default)]
+    pub seed: Option<u64>,
+    /// Denoising steps. Leave unset for the server's default.
+    #[serde(default)]
+    pub steps: Option<u32>,
+    /// Where to save the PNG, relative to the working directory.
+    /// Default: generated-images/<time>-<seed>.png
+    #[serde(default)]
+    pub save_as: Option<String>,
+}
+
+pub struct GenerateTool;
+
+impl GenerateTool {
+    pub fn new() -> Self {
+        Self
+    }
+
+    pub async fn generate_with_cwd(
+        &self,
+        params: ImageGenerateParams,
+        working_dir: Option<&Path>,
+        cancel_token: CancellationToken,
+    ) -> CallToolResult {
+        let endpoint = crate::config::Config::global()
+            .get_param::<String>(IMAGE_ENDPOINT_KEY)
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| DEFAULT_IMAGE_ENDPOINT.to_string());
+        tokio::select! {
+            result = generate(&endpoint, &params, working_dir) => match result {
+                Ok(done) => done.into_result(&params.prompt),
+                Err(error) => CallToolResult::error(vec![visible_text(format!("Error: {error}"))]),
+            },
+            () = cancel_token.cancelled() => {
+                CallToolResult::error(vec![visible_text("Error: image generation was cancelled")])
+            }
+        }
+    }
+}
+
+impl Default for GenerateTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+struct Generated {
+    png_base64: String,
+    saved_to: PathBuf,
+    seed: Option<u64>,
+    seconds: Option<f64>,
+    size: String,
+}
+
+impl Generated {
+    fn into_result(self, prompt: &str) -> CallToolResult {
+        let seed = self.seed.map(|s| format!(", seed {s}")).unwrap_or_default();
+        let secs = self
+            .seconds
+            .map(|s| format!(" in {s:.0} s"))
+            .unwrap_or_default();
+        let mut result = CallToolResult::success(vec![
+            visible_text(format!(
+                "Generated a {} image{secs}{seed}. Saved to {}.",
+                self.size,
+                self.saved_to.display()
+            )),
+            ContentBlock::image(self.png_base64, "image/png".to_string()),
+        ]);
+        result.structured_content = Some(json!({
+            "prompt": prompt,
+            "path": self.saved_to.to_string_lossy(),
+            "size": self.size,
+            "seed": self.seed,
+            "seconds": self.seconds,
+        }));
+        result
+    }
+}
+
+async fn generate(
+    endpoint: &str,
+    params: &ImageGenerateParams,
+    working_dir: Option<&Path>,
+) -> Result<Generated, String> {
+    if params.prompt.trim().is_empty() {
+        return Err("prompt cannot be empty".to_string());
+    }
+    let size = params
+        .size
+        .clone()
+        .unwrap_or_else(|| "1024x1024".to_string());
+
+    let mut body = json!({
+        "prompt": params.prompt,
+        "n": 1,
+        "size": size,
+        "response_format": "b64_json",
+    });
+    if let Some(seed) = params.seed {
+        body["seed"] = json!(seed);
+    }
+    if let Some(steps) = params.steps {
+        body["steps"] = json!(steps);
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(GENERATE_TIMEOUT)
+        .build()
+        .map_err(|error| format!("failed to create HTTP client: {error}"))?;
+    let response = client
+        .post(endpoint)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|error| format!("could not reach the image server at {endpoint}: {error}"))?;
+    let status = response.status();
+    let text = response
+        .text()
+        .await
+        .map_err(|error| format!("failed to read the image server's answer: {error}"))?;
+    let answer: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
+    if !status.is_success() {
+        let message = answer["error"]["message"]
+            .as_str()
+            .map(str::to_string)
+            .unwrap_or_else(|| text.chars().take(500).collect());
+        return Err(format!("the image server answered {status}: {message}"));
+    }
+
+    let first = &answer["data"][0];
+    let png_base64 = first["b64_json"]
+        .as_str()
+        .ok_or_else(|| "the image server's answer has no data[0].b64_json".to_string())?
+        .to_string();
+    let png = base64::prelude::BASE64_STANDARD
+        .decode(&png_base64)
+        .map_err(|error| format!("the image server sent invalid base64: {error}"))?;
+    let seed = first["seed"].as_u64().or(params.seed);
+    let seconds = answer["strata"]["seconds"].as_f64();
+
+    let saved_to = match &params.save_as {
+        Some(path) if !path.trim().is_empty() => resolve_path(path, working_dir),
+        _ => {
+            let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+            let name = match seed {
+                Some(seed) => format!("{stamp}-{seed}.png"),
+                None => format!("{stamp}.png"),
+            };
+            resolve_path(&format!("{DEFAULT_DIR}/{name}"), working_dir)
+        }
+    };
+    if let Some(parent) = saved_to.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| format!("could not create {}: {error}", parent.display()))?;
+    }
+    std::fs::write(&saved_to, &png)
+        .map_err(|error| format!("could not save {}: {error}", saved_to.display()))?;
+
+    Ok(Generated {
+        png_base64,
+        saved_to,
+        seed,
+        seconds,
+        size,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wiremock::matchers::{body_partial_json, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    // A 1x1 PNG.
+    const PNG_B64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+
+    fn params(save_as: Option<&str>) -> ImageGenerateParams {
+        ImageGenerateParams {
+            prompt: "a red fox in snow".to_string(),
+            size: Some("512x512".to_string()),
+            seed: Some(42),
+            steps: Some(30),
+            save_as: save_as.map(str::to_string),
+        }
+    }
+
+    #[tokio::test]
+    async fn saves_the_png_and_reports_seed_and_time() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/images/generations"))
+            .and(body_partial_json(json!({
+                "prompt": "a red fox in snow",
+                "size": "512x512",
+                "seed": 42,
+                "steps": 30,
+                "response_format": "b64_json",
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "created": 1,
+                "data": [{"b64_json": PNG_B64, "seed": 42}],
+                "strata": {"seconds": 41.6, "steps": 30},
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let dir = tempfile::tempdir().unwrap();
+
+        let done = generate(
+            &format!("{}/v1/images/generations", server.uri()),
+            &params(Some("art/fox.png")),
+            Some(dir.path()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(done.saved_to, dir.path().join("art/fox.png"));
+        assert_eq!(
+            std::fs::read(&done.saved_to).unwrap(),
+            base64::prelude::BASE64_STANDARD.decode(PNG_B64).unwrap()
+        );
+        let result = done.into_result("a red fox in snow");
+        assert_eq!(result.is_error, Some(false));
+        let text = result.content[0].as_text().unwrap().text.clone();
+        assert!(text.contains("512x512 image in 42 s, seed 42"), "{text}");
+        assert!(result.content[1].as_image().is_some());
+    }
+
+    #[tokio::test]
+    async fn default_location_is_generated_images_with_the_seed_in_the_name() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "data": [{"b64_json": PNG_B64, "seed": 7}],
+            })))
+            .mount(&server)
+            .await;
+        let dir = tempfile::tempdir().unwrap();
+
+        let done = generate(&server.uri(), &params(None), Some(dir.path()))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            done.saved_to.parent().unwrap(),
+            dir.path().join(DEFAULT_DIR)
+        );
+        let name = done.saved_to.file_name().unwrap().to_string_lossy();
+        assert!(name.ends_with("-7.png"), "{name}");
+    }
+
+    #[tokio::test]
+    async fn the_servers_own_error_message_comes_through() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(400).set_body_json(json!({
+                "error": {"message": "size 500x500: each side a multiple of 32 from 256 to 2048"}
+            })))
+            .mount(&server)
+            .await;
+
+        let error = generate(&server.uri(), &params(None), None)
+            .await
+            .err()
+            .unwrap();
+
+        assert!(error.contains("400"), "{error}");
+        assert!(error.contains("each side a multiple of 32"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn an_empty_prompt_never_reaches_the_server() {
+        let mut p = params(None);
+        p.prompt = "  ".to_string();
+        let error = generate("http://127.0.0.1:9/never", &p, None)
+            .await
+            .err()
+            .unwrap();
+        assert_eq!(error, "prompt cannot be empty");
+    }
+}

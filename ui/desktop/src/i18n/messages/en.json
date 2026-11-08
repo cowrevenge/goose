@@ -272,6 +272,9 @@
   "compactStep.fetch": {
     "defaultMessage": "Fetched a page"
   },
+  "compactStep.image": {
+    "defaultMessage": "Generated an image"
+  },
   "compactStep.list": {
     "defaultMessage": "Listed a folder"
   },

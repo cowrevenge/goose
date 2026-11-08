@@ -13,6 +13,7 @@ const i18n = defineMessages({
   list: { id: 'compactStep.list', defaultMessage: 'Listed a folder' },
   fetch: { id: 'compactStep.fetch', defaultMessage: 'Fetched a page' },
   command: { id: 'compactStep.command', defaultMessage: 'Ran a command' },
+  image: { id: 'compactStep.image', defaultMessage: 'Generated an image' },
   write: { id: 'compactStep.write', defaultMessage: 'Edited a file' },
   agent: { id: 'compactStep.agent', defaultMessage: 'Ran a sub-agent' },
   tool: { id: 'compactStep.tool', defaultMessage: 'Used {tool}' },

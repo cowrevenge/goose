@@ -101,6 +101,53 @@ describe('GooseMessage', () => {
     expect(screen.queryByText('full card t2')).toBeNull();
   });
 
+  it('keeps a generated image in view under its row', () => {
+    const message: Message = {
+      content: [call('g1', 'developer__generate_image', { prompt: 'a red fox in snow' })],
+      created: 1,
+      metadata: { agentVisible: true, userVisible: true },
+      role: 'assistant',
+    };
+    const done: ToolRenderState = {
+      requestId: 'g1',
+      response: {
+        type: 'toolResponse',
+        id: 'g1',
+        toolResult: {
+          status: 'success',
+          value: {
+            content: [
+              { type: 'text', text: 'Generated a 1024x1024 image.' },
+              { type: 'image', data: 'AAAA', mimeType: 'image/png' },
+            ],
+            isError: false,
+          },
+        },
+      },
+      confirmation: undefined,
+      isPending: false,
+    } as unknown as ToolRenderState;
+    render(
+      <GooseMessage
+        sessionId="session"
+        message={message}
+        hideTimestamp={false}
+        toolStates={[done]}
+        toolNotifications={[undefined]}
+        toolConfirmationShownInline={false}
+        append={vi.fn()}
+        isStreaming={false}
+        compact
+      />,
+      { wrapper: IntlTestWrapper }
+    );
+
+    expect(screen.getByText('Generated an image')).toBeInTheDocument();
+    expect(screen.getByText('a red fox in snow')).toBeInTheDocument();
+    const img = screen.getByAltText('a red fox in snow');
+    expect(img.getAttribute('src')).toBe('data:image/png;base64,AAAA');
+  });
+
   it('shows only the failed calls when asked', () => {
     renderCompact(true);
 

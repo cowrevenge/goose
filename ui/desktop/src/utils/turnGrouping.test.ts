@@ -162,6 +162,8 @@ describe('classifyToolCall', () => {
     expect(kind('fetch__fetch')).toBe('fetch');
     expect(kind('subagent__delegate')).toBe('agent');
     expect(kind('memory__remember_memory')).toBe('tool');
+    expect(kind('developer__generate_image')).toBe('image');
+    expect(kind('developer__read_image')).toBe('read');
   });
 
   it('splits the text editor by its sub-command', () => {
