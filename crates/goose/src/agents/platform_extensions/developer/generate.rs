@@ -18,6 +18,12 @@ pub const IMAGE_ENDPOINT_KEY: &str = "GOOSE_IMAGE_ENDPOINT";
 /// Config key (secret, config value or environment variable) for the image server's API key, sent as a Bearer token.
 pub const IMAGE_API_KEY_KEY: &str = "GOOSE_IMAGE_API_KEY";
 const DEFAULT_IMAGE_ENDPOINT: &str = "http://127.0.0.1:8080/v1/images/generations";
+/// Config key (or environment variable) for the image model switcher (StrataTray's control port).
+/// Set it to "off" to never switch.
+pub const IMAGE_SWITCH_URL_KEY: &str = "GOOSE_IMAGE_SWITCH_URL";
+const DEFAULT_IMAGE_SWITCH_URL: &str = "http://127.0.0.1:8081/image";
+/// A switch restarts the server, which can take minutes.
+const SWITCH_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 /// A full-precision model at many steps can take minutes; Strata's own job limit is an hour.
 const GENERATE_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 const DEFAULT_DIR: &str = "generated-images";
@@ -38,6 +44,10 @@ pub struct ImageGenerateParams {
     /// Seed for a repeatable image. Default: random (the result says which was used).
     #[serde(default)]
     pub seed: Option<u64>,
+    /// Image model to draw with, e.g. "qwen-image-2.1-turbo-F16" or "qwen-image-2.1-turbo-Q8_0".
+    /// Leave unset to use the one already in use. Switching restarts the model server.
+    #[serde(default)]
+    pub model: Option<String>,
     /// Denoising steps. Leave unset for the server's default.
     #[serde(default)]
     pub steps: Option<u32>,
@@ -72,8 +82,27 @@ impl GenerateTool {
             .ok()
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty());
+        let switch_url = config
+            .get_param::<String>(IMAGE_SWITCH_URL_KEY)
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| DEFAULT_IMAGE_SWITCH_URL.to_string());
+        let work = async {
+            if let Some(model) = params
+                .model
+                .as_deref()
+                .map(str::trim)
+                .filter(|m| !m.is_empty())
+            {
+                if !switch_url.eq_ignore_ascii_case("off") {
+                    switch_image_model(&switch_url, model).await?;
+                }
+            }
+            generate(&endpoint, api_key.as_deref(), &params, working_dir).await
+        };
         tokio::select! {
-            result = generate(&endpoint, api_key.as_deref(), &params, working_dir) => match result {
+            result = work => match result {
                 Ok(done) => done.into_result(&params.prompt),
                 Err(error) => CallToolResult::error(vec![visible_text(format!("Error: {error}"))]),
             },
@@ -122,6 +151,40 @@ impl Generated {
         }));
         result
     }
+}
+
+/// Asks the switcher to put `model` on the image server. A switcher that does not answer is not an
+/// error (the server keeps whatever it has, as with no switcher at all); one that refuses is, because
+/// the picture would otherwise come from another model without saying so.
+async fn switch_image_model(url: &str, model: &str) -> Result<(), String> {
+    let client = reqwest::Client::builder()
+        .timeout(SWITCH_TIMEOUT)
+        .build()
+        .map_err(|error| format!("failed to create HTTP client: {error}"))?;
+    let response = match client
+        .post(url)
+        .json(&json!({ "model": model }))
+        .send()
+        .await
+    {
+        Ok(response) => response,
+        Err(error) => {
+            tracing::debug!("image model switcher at {url} did not answer ({error}); drawing with the current model");
+            return Ok(());
+        }
+    };
+    if response.status().is_success() {
+        return Ok(());
+    }
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    let message = serde_json::from_str::<Value>(&body)
+        .ok()
+        .and_then(|v| v["error"].as_str().map(str::to_string))
+        .unwrap_or(body);
+    Err(format!(
+        "could not switch the image model to '{model}': the switcher at {url} answered {status}: {message}"
+    ))
 }
 
 async fn generate(
@@ -230,6 +293,7 @@ mod tests {
             size: Some("512x512".to_string()),
             seed: Some(42),
             steps: Some(30),
+            model: None,
             save_as: save_as.map(str::to_string),
         }
     }
@@ -318,6 +382,53 @@ mod tests {
 
         assert!(error.contains("400"), "{error}");
         assert!(error.contains("each side a multiple of 32"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn the_switcher_is_asked_for_the_model() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/image"))
+            .and(body_partial_json(
+                json!({"model": "qwen-image-2.1-turbo-Q8_0"}),
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"switched": true})))
+            .expect(1)
+            .mount(&server)
+            .await;
+        switch_image_model(
+            &format!("{}/image", server.uri()),
+            "qwen-image-2.1-turbo-Q8_0",
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_refused_switch_is_an_error_with_the_switchers_reason() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(409).set_body_json(json!({
+                "error": "no image model \"x\"; there are: qwen-image-2.1-turbo-F16, qwen-image-2.1-turbo-Q8_0"
+            })))
+            .mount(&server)
+            .await;
+        let error = switch_image_model(&format!("{}/image", server.uri()), "x")
+            .await
+            .err()
+            .unwrap();
+        assert!(error.contains("409"), "{error}");
+        assert!(
+            error.contains("there are: qwen-image-2.1-turbo-F16"),
+            "{error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_silent_switcher_is_not_an_error() {
+        switch_image_model("http://127.0.0.1:9/image", "anything")
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
