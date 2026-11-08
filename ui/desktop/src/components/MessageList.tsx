@@ -4,7 +4,8 @@ import { defineMessages, useIntl } from '../i18n';
 import GooseMessage from './GooseMessage';
 import UserMessage from './UserMessage';
 import ThinkingContent from './ThinkingContent';
-import TurnWorkSection from './TurnWorkSection';
+import TurnStepsGroup from './TurnStepsGroup';
+import { StepsStartCollapsedContext } from './turnWorkContext';
 import {
   SystemNotificationInline,
   getInlineSystemNotification,
@@ -247,8 +248,8 @@ export default function MessageList({
       ? getModelDisplayName(model.id)
       : intl.formatMessage(i18n.requestedModel, { model: getModelDisplayName(model.id) });
 
-  // One agent turn spans many messages (assistant turns and tool-result messages); group them so
-  // the work collapses and only the final answer stays in view.
+  // One agent turn spans many messages (assistant turns and tool-result messages); split it into
+  // blocks so the model's text and every change stay in view and only looking-around steps fold.
   const groups = useMemo(
     () =>
       groupIntoTurns(displayedMessages, {
@@ -345,20 +346,39 @@ export default function MessageList({
     const turnIsStreaming =
       isStreamingMessage && turnEntries[turnEntries.length - 1].index === lastMessageIndex;
 
+    const lastBlock = group.blocks[group.blocks.length - 1];
     messageRows.push(
       <div key={group.key} className="relative mt-4 assistant">
-        <TurnWorkSection
-          stats={group.stats}
-          isStreaming={turnIsStreaming}
-          hasFinal={group.final !== null}
-        >
-          {group.work.map((entry) => renderRow(entry))}
-          {group.finalThinking && (
-            <div className="mt-4">
-              <ThinkingContent content={group.finalThinking} isExpanded={false} />
-            </div>
-          )}
-        </TurnWorkSection>
+        {group.blocks.map((block) => {
+          if (block.kind === 'steps') {
+            return (
+              <TurnStepsGroup
+                key={block.key}
+                counts={block.counts}
+                thinking={block.thinking}
+                live={turnIsStreaming && !group.final && block === lastBlock}
+                activity={block.activity}
+              >
+                {block.entries.map((entry) => renderRow(entry))}
+              </TurnStepsGroup>
+            );
+          }
+          // Text and stand-out steps stay in view; their tool calls show as one line each. A step
+          // waiting for the user shows in full so its buttons are right there.
+          return (
+            <StepsStartCollapsedContext.Provider
+              key={block.key}
+              value={!(block.kind === 'standout' && block.reason === 'attention')}
+            >
+              {block.entries.map((entry) => renderRow(entry))}
+            </StepsStartCollapsedContext.Provider>
+          );
+        })}
+        {group.finalThinking && (
+          <div className="mt-2">
+            <ThinkingContent content={group.finalThinking} isExpanded={false} />
+          </div>
+        )}
       </div>
     );
     if (group.final) {

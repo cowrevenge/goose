@@ -2474,6 +2474,24 @@
   "navigationPanel.chats": {
     "defaultMessage": "Chats"
   },
+  "navigationPanel.delete.cancel": {
+    "defaultMessage": "Cancel"
+  },
+  "navigationPanel.delete.failed": {
+    "defaultMessage": "Could not delete {name}: {error}"
+  },
+  "navigationPanel.delete.message": {
+    "defaultMessage": "Delete \"{name}\"? This cannot be undone."
+  },
+  "navigationPanel.delete.success": {
+    "defaultMessage": "Chat deleted"
+  },
+  "navigationPanel.delete.title": {
+    "defaultMessage": "Delete chat"
+  },
+  "navigationPanel.deleteChat": {
+    "defaultMessage": "Delete chat"
+  },
   "navigationPanel.loadingChats": {
     "defaultMessage": "Loading chats…"
   },
@@ -4721,25 +4739,28 @@
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "Goose would like to call {toolName}. Allow?"
   },
-  "turnWork.failed": {
-    "defaultMessage": "{count} failed"
+  "turnSteps.command": {
+    "defaultMessage": "{count,plural,one{ran # command} other{ran # commands}}"
   },
-  "turnWork.needsAttention": {
-    "defaultMessage": "Waiting for you"
+  "turnSteps.fetch": {
+    "defaultMessage": "{count,plural,one{fetched # page} other{fetched # pages}}"
   },
-  "turnWork.noAnswer": {
-    "defaultMessage": "Ended without a final answer"
+  "turnSteps.list": {
+    "defaultMessage": "{count,plural,one{listed # folder} other{listed # folders}}"
   },
-  "turnWork.thought": {
-    "defaultMessage": "Thought for {duration}"
+  "turnSteps.read": {
+    "defaultMessage": "{count,plural,one{read # file} other{read # files}}"
   },
-  "turnWork.toolCalls": {
-    "defaultMessage": "{count,plural,one{# tool call} other{# tool calls}}"
+  "turnSteps.search": {
+    "defaultMessage": "{count,plural,one{searched # time} other{searched # times}}"
   },
-  "turnWork.worked": {
-    "defaultMessage": "Worked for {duration}"
+  "turnSteps.thought": {
+    "defaultMessage": "thought"
   },
-  "turnWork.working": {
+  "turnSteps.tool": {
+    "defaultMessage": "{count,plural,one{used # tool} other{used # tools}}"
+  },
+  "turnSteps.working": {
     "defaultMessage": "Working"
   },
   "updateSection.autoDownload": {

@@ -362,7 +362,7 @@ describe('MessageList transcript window', () => {
 });
 
 describe('MessageList turn grouping', () => {
-  it('collapses the work of a turn behind a summary and keeps the answer in view', () => {
+  it('folds a run of steps behind a summary of what they did and keeps the answer in view', () => {
     const transcript: Message[] = [
       message('u1', 'user', [{ type: 'text', text: 'Check the DB' }]),
       { ...message('a1', 'assistant', [toolRequest('t1')]), created: 10 },
@@ -372,11 +372,11 @@ describe('MessageList turn grouping', () => {
 
     const { container } = renderList(transcript);
 
-    const trigger = screen.getByRole('button', { name: /Worked for 35s · 1 tool call/ });
-    const content = container.querySelector('.turn-work [data-slot="collapsible-content"]');
+    const trigger = screen.getByRole('button', { name: /Used 1 tool/ });
+    const content = container.querySelector('.turn-steps [data-slot="collapsible-content"]');
     expect(content?.getAttribute('data-state')).toBe('closed');
     expect(content?.textContent).toContain('a1');
-    expect(screen.getByText('a2').closest('.turn-work')).toBeNull();
+    expect(screen.getByText('a2').closest('.turn-steps')).toBeNull();
 
     act(() => trigger.click());
     expect(content?.getAttribute('data-state')).toBe('open');
