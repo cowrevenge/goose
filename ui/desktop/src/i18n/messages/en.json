@@ -1511,11 +1511,17 @@
   "imageModelPicker.imageModel": {
     "defaultMessage": "Image model"
   },
+  "imageModelPicker.noModels": {
+    "defaultMessage": "No image models found"
+  },
   "imageModelPicker.restartHint": {
     "defaultMessage": "Switching restarts the model server."
   },
   "imageModelPicker.switching": {
     "defaultMessage": "Switching…"
+  },
+  "imageModelPicker.unavailable": {
+    "defaultMessage": "StrataTray did not answer with image models"
   },
   "imagePreview.altText": {
     "defaultMessage": "goose image"
@@ -3919,6 +3925,9 @@
   },
   "sessionActionsHeader.copyText": {
     "defaultMessage": "Copy text"
+  },
+  "sessionActionsHeader.diagnostics": {
+    "defaultMessage": "Generate diagnostics bundle"
   },
   "sessionActionsHeader.duplicateFailed": {
     "defaultMessage": "Failed to duplicate session: {error}"

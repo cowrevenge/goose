@@ -1,6 +1,6 @@
 import { AppEvents } from '../constants/events';
 import React, { useRef, useState, useEffect, useMemo, useCallback } from 'react';
-import { ArrowUp, Bug, ScrollText } from 'lucide-react';
+import { ArrowUp, ScrollText } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/Tooltip';
 import { Button } from './ui/button';
 import type { View } from '../utils/navigationUtils';
@@ -30,11 +30,10 @@ import { DroppedFile, useFileDrop } from '../hooks/useFileDrop';
 import { Recipe } from '../recipe';
 import { MessageQueue, QueuedMessage } from './MessageQueue';
 import { detectInterruption } from '../utils/interruptionDetector';
-import { DiagnosticsModal } from './ui/Diagnostics';
 import type { Message } from '../types/message';
 import { getInitialWorkingDir } from '../utils/workingDir';
 import { getPredefinedModelsFromEnv } from './settings/models/predefinedModelsUtils';
-import { trackFileAttached, trackVoiceDictation, trackDiagnosticsOpened } from '../utils/analytics';
+import { trackFileAttached, trackVoiceDictation } from '../utils/analytics';
 import { getNavigationShortcutText } from '../utils/keyboardShortcuts';
 import { UserInput, ImageData } from '../types/message';
 import { compressImageDataUrl } from '../utils/conversionUtils';
@@ -358,7 +357,6 @@ export default function ChatInput({
   }, [sessionModel, sessionProvider, configModel, configProvider, sessionId, modelOverride]);
   const [tokenLimit, setTokenLimit] = useState<number>(TOKEN_LIMIT_DEFAULT);
   const [isTokenLimitLoaded, setIsTokenLimitLoaded] = useState(false);
-  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [workingDirOverride, setWorkingDirOverride] = useState<string | null>(null);
   const currentWorkingDir = workingDirOverride ?? workingDir ?? getInitialWorkingDir();
 
@@ -1716,15 +1714,14 @@ export default function ChatInput({
         </div>
       )}
 
-      {/* Bottom action bar, two rows; no dividers. Row 1: model, thinking,
-          image model, loop, working dir, then (after a spacer) cost and the
-          context indicator. Row 2, right-aligned: extensions, diagnostics,
-          attach, mic, send. When the bar is narrow (e.g. on a small window),
-          the secondary controls drop out so the model selector + send button
-          always stay visible. */}
+      {/* Bottom action bar, two rows; no dividers.
+          Row 1: model, thinking, image model, loop (in a chat).
+          Row 2: attach, working dir, git branch, then (after a spacer) cost,
+          context, extensions, voice, mic, send. Nothing hides on a narrow
+          window; the working dir name is shortened instead. */}
       <div ref={bottomBarRef} className="flex flex-col gap-1 px-3 py-2 relative">
-        <div className="flex flex-row items-center gap-2">
-          {/* Left: model selector */}
+        <div className="flex flex-row flex-wrap items-center gap-2">
+          {/* Row 1: model selector (with the thinking picker) */}
           <Tooltip>
             <div>
               <ModelsBottomBar
@@ -1740,10 +1737,10 @@ export default function ChatInput({
             </div>
           </Tooltip>
 
-          {/* Left: image model (the local image server's, switched through StrataTray) */}
+          {/* Row 1: image model (the local image server's, switched through StrataTray) */}
           <ImageModelPicker isLoading={isLoading} />
 
-          {/* Left: loop on/off (the session's /grind goal) */}
+          {/* Row 1: loop on/off (the session's /grind goal) */}
           {sessionId && (
             <LoopToggle
               sessionId={sessionId}
@@ -1751,105 +1748,70 @@ export default function ChatInput({
               onStartIdle={(goal) => handleSubmit({ msg: `/grind ${goal}`, images: [] })}
             />
           )}
+        </div>
 
-          {/* Left: working directory (leaf folder name only) */}
-          {!isBottomBarNarrow && (
-            <DirSwitcher
-              className=""
-              sessionId={sessionId ?? undefined}
-              workingDir={currentWorkingDir}
-              onWorkingDirChange={async (newDir) => {
-                await onWorkingDirChange(newDir);
-                setWorkingDirOverride(newDir);
-              }}
-            />
-          )}
+        <div className="flex flex-row items-center gap-2">
+          {/* Row 2: attach */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                onClick={handleFileSelect}
+                disabled={isFilePickerOpen}
+                variant="ghost"
+                size="sm"
+                shape="round"
+                className={cn(
+                  'text-text-primary/70 hover:text-text-primary transition-colors',
+                  isFilePickerOpen ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
+                )}
+              >
+                <Attach className="w-4 h-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Attach file</TooltipContent>
+          </Tooltip>
 
-          {!isBottomBarNarrow && currentWorkingDir && (
-            <GitBranchIndicator dir={currentWorkingDir} className="ml-1" />
-          )}
+          {/* Row 2: working directory */}
+          <DirSwitcher
+            className={cn('min-w-0', isBottomBarNarrow ? 'max-w-[120px]' : 'max-w-[320px]')}
+            sessionId={sessionId ?? undefined}
+            workingDir={currentWorkingDir}
+            onWorkingDirChange={async (newDir) => {
+              await onWorkingDirChange(newDir);
+              setWorkingDirOverride(newDir);
+            }}
+          />
+
+          {currentWorkingDir && <GitBranchIndicator dir={currentWorkingDir} className="ml-1" />}
 
           {/* Spacer */}
           <div className="flex-1" />
 
-          {!isBottomBarNarrow && (
-            <>
-              {/* Right: cost tracker (when enabled) */}
-              {COST_TRACKING_ENABLED && (
-                <CostTracker
-                  inputTokens={accumulatedInputTokens}
-                  outputTokens={accumulatedOutputTokens}
-                  accumulatedCost={accumulatedCost}
-                  model={effectiveModel}
-                  provider={effectiveProvider}
-                />
-              )}
-
-              {/* Right: context window indicator */}
-              <ContextWindowIndicator
-                totalTokens={totalTokens || 0}
-                tokenLimit={tokenLimit}
-                alerts={alerts}
-              />
-            </>
+          {/* Row 2 right: cost tracker (when enabled) */}
+          {COST_TRACKING_ENABLED && (
+            <CostTracker
+              inputTokens={accumulatedInputTokens}
+              outputTokens={accumulatedOutputTokens}
+              accumulatedCost={accumulatedCost}
+              model={effectiveModel}
+              provider={effectiveProvider}
+            />
           )}
-        </div>
 
-        {/* Row 2: everything after the context indicator */}
-        <div className="flex flex-row items-center justify-end gap-2">
-          {!isBottomBarNarrow && (
-            <>
-              {/* Right: extension selector */}
-              <BottomMenuExtensionSelection
-                sessionId={sessionId}
-                nextChatExtensionDraft={nextChatExtensionDraft}
-                onNextChatExtensionDraftChange={onNextChatExtensionDraftChange}
-              />
+          {/* Row 2 right: context window indicator */}
+          <ContextWindowIndicator
+            totalTokens={totalTokens || 0}
+            tokenLimit={tokenLimit}
+            alerts={alerts}
+          />
 
-              {/* Right: diagnostics */}
-              {sessionId && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      type="button"
-                      onClick={() => {
-                        trackDiagnosticsOpened();
-                        setDiagnosticsOpen(true);
-                      }}
-                      variant="ghost"
-                      size="sm"
-                      shape="round"
-                      className="text-text-primary/70 hover:text-text-primary cursor-pointer transition-colors"
-                    >
-                      <Bug className="w-4 h-4" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>Generate diagnostics bundle</TooltipContent>
-                </Tooltip>
-              )}
-
-              {/* Right: attach */}
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    type="button"
-                    onClick={handleFileSelect}
-                    disabled={isFilePickerOpen}
-                    variant="ghost"
-                    size="sm"
-                    shape="round"
-                    className={cn(
-                      'text-text-primary/70 hover:text-text-primary transition-colors',
-                      isFilePickerOpen ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
-                    )}
-                  >
-                    <Attach className="w-4 h-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>Attach file</TooltipContent>
-              </Tooltip>
-            </>
-          )}
+          {/* Row 2 right: extension selector */}
+          <BottomMenuExtensionSelection
+            sessionId={sessionId}
+            nextChatExtensionDraft={nextChatExtensionDraft}
+            onNextChatExtensionDraftChange={onNextChatExtensionDraftChange}
+          />
 
           {liveVoice && (
             <LiveVoiceButton
@@ -1956,13 +1918,6 @@ export default function ChatInput({
             </Tooltip>
           )}
         </div>
-        {sessionId && diagnosticsOpen && (
-          <DiagnosticsModal
-            isOpen={diagnosticsOpen}
-            onClose={() => setDiagnosticsOpen(false)}
-            sessionId={sessionId}
-          />
-        )}
         <MentionPopover
           ref={mentionPopoverRef}
           isOpen={mentionPopover.isOpen}

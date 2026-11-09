@@ -37,10 +37,10 @@ describe('ImageModelPicker', () => {
     await waitFor(() => expect(mockSwitch).toHaveBeenCalledWith(MODELS[1]));
   });
 
-  it('is hidden when the switcher cannot be asked', async () => {
+  it('shows a red X with the reason when the switcher does not answer', async () => {
     mockList.mockResolvedValue({ current: null, models: [], error: 'did not answer' });
     render(<ImageModelPicker isLoading={false} />, { wrapper: IntlTestWrapper });
-    await waitFor(() => expect(mockList).toHaveBeenCalled());
-    expect(screen.queryByTestId('image-model-picker')).toBeNull();
+    expect(await screen.findByTestId('image-model-unavailable')).toBeInTheDocument();
+    expect(screen.getByTestId('image-model-picker')).toHaveAttribute('title', 'did not answer');
   });
 });
