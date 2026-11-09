@@ -82,12 +82,7 @@ impl GenerateTool {
             .ok()
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty());
-        let switch_url = config
-            .get_param::<String>(IMAGE_SWITCH_URL_KEY)
-            .ok()
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| DEFAULT_IMAGE_SWITCH_URL.to_string());
+        let switch_url = image_switch_url();
         let work = async {
             if let Some(model) = params
                 .model
@@ -95,9 +90,7 @@ impl GenerateTool {
                 .map(str::trim)
                 .filter(|m| !m.is_empty())
             {
-                if !switch_url.eq_ignore_ascii_case("off") {
-                    switch_image_model(&switch_url, model).await?;
-                }
+                switch_image_model(&switch_url, model, false).await?;
             }
             generate(&endpoint, api_key.as_deref(), &params, working_dir).await
         };
@@ -110,6 +103,49 @@ impl GenerateTool {
                 CallToolResult::error(vec![visible_text("Error: image generation was cancelled")])
             }
         }
+    }
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ImageModelParams {
+    /// The image model to switch to. Leave unset to list the models and see which one is in use.
+    #[serde(default)]
+    pub model: Option<String>,
+}
+
+/// `image_model`: lists the local image models or switches to one (through the same switcher as
+/// the chat bar's image picker and the tray's Image menu).
+pub async fn image_model_tool(params: ImageModelParams) -> CallToolResult {
+    let url = image_switch_url();
+    let wanted = params
+        .model
+        .as_deref()
+        .map(str::trim)
+        .filter(|m| !m.is_empty());
+    if let Some(model) = wanted {
+        if let Err(error) = switch_image_model(&url, model, true).await {
+            return CallToolResult::error(vec![visible_text(format!("Error: {error}"))]);
+        }
+    }
+    match list_image_models(&url).await {
+        Ok(list) => {
+            let current = list.current.unwrap_or_else(|| "none".to_string());
+            let lead = if wanted.is_some() {
+                format!("Switched. The image model in use is now {current}.")
+            } else {
+                format!("The image model in use is {current}.")
+            };
+            CallToolResult::success(vec![visible_text(format!(
+                "{lead} Available: {}.",
+                list.models.join(", ")
+            ))])
+        }
+        Err(error) => match wanted {
+            Some(model) => CallToolResult::success(vec![visible_text(format!(
+                "Switched to {model}. (Could not list the models afterwards: {error})"
+            ))]),
+            None => CallToolResult::error(vec![visible_text(format!("Error: {error}"))]),
+        },
     }
 }
 
@@ -153,10 +189,82 @@ impl Generated {
     }
 }
 
-/// Asks the switcher to put `model` on the image server. A switcher that does not answer is not an
-/// error (the server keeps whatever it has, as with no switcher at all); one that refuses is, because
-/// the picture would otherwise come from another model without saying so.
-async fn switch_image_model(url: &str, model: &str) -> Result<(), String> {
+/// The image model switcher's URL (StrataTray's control port unless configured; "off" = none).
+pub fn image_switch_url() -> String {
+    crate::config::Config::global()
+        .get_param::<String>(IMAGE_SWITCH_URL_KEY)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| DEFAULT_IMAGE_SWITCH_URL.to_string())
+}
+
+fn switcher_off(url: &str) -> bool {
+    url.eq_ignore_ascii_case("off")
+}
+
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct ImageModelList {
+    pub current: Option<String>,
+    pub models: Vec<String>,
+}
+
+/// The image models the switcher offers and the one in use.
+pub async fn list_image_models(url: &str) -> Result<ImageModelList, String> {
+    if switcher_off(url) {
+        return Err(format!(
+            "the image model switcher is off ({IMAGE_SWITCH_URL_KEY})"
+        ));
+    }
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|error| format!("failed to create HTTP client: {error}"))?;
+    let response = client.get(url).send().await.map_err(|error| {
+        format!(
+            "the image model switcher at {url} did not answer (is StrataTray running?): {error}"
+        )
+    })?;
+    let status = response.status();
+    let body: Value = response
+        .json()
+        .await
+        .map_err(|error| format!("the image model switcher at {url} sent no JSON: {error}"))?;
+    if !status.is_success() {
+        let message = body["error"].as_str().unwrap_or("no reason given");
+        return Err(format!(
+            "the image model switcher at {url} answered {status}: {message}"
+        ));
+    }
+    Ok(ImageModelList {
+        current: body["model"].as_str().map(str::to_string),
+        models: body["models"]
+            .as_array()
+            .map(|all| {
+                all.iter()
+                    .filter_map(|m| m.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default(),
+    })
+}
+
+/// Asks the switcher to put `model` on the image server. One that refuses is always an error, because
+/// the picture would otherwise come from another model without saying so. One that does not answer is
+/// an error only when `strict` (an explicit switch); before a drawing the server keeps what it has.
+pub async fn switch_image_model(url: &str, model: &str, strict: bool) -> Result<(), String> {
+    if model.is_empty() {
+        return Err("no image model named".to_string());
+    }
+    if switcher_off(url) {
+        return if strict {
+            Err(format!(
+                "the image model switcher is off ({IMAGE_SWITCH_URL_KEY})"
+            ))
+        } else {
+            Ok(())
+        };
+    }
     let client = reqwest::Client::builder()
         .timeout(SWITCH_TIMEOUT)
         .build()
@@ -168,6 +276,11 @@ async fn switch_image_model(url: &str, model: &str) -> Result<(), String> {
         .await
     {
         Ok(response) => response,
+        Err(error) if strict => {
+            return Err(format!(
+                "the image model switcher at {url} did not answer (is StrataTray running?): {error}"
+            ));
+        }
         Err(error) => {
             tracing::debug!("image model switcher at {url} did not answer ({error}); drawing with the current model");
             return Ok(());
@@ -399,6 +512,7 @@ mod tests {
         switch_image_model(
             &format!("{}/image", server.uri()),
             "qwen-image-2.1-turbo-Q8_0",
+            false,
         )
         .await
         .unwrap();
@@ -413,7 +527,7 @@ mod tests {
             })))
             .mount(&server)
             .await;
-        let error = switch_image_model(&format!("{}/image", server.uri()), "x")
+        let error = switch_image_model(&format!("{}/image", server.uri()), "x", false)
             .await
             .err()
             .unwrap();
@@ -426,9 +540,36 @@ mod tests {
 
     #[tokio::test]
     async fn a_silent_switcher_is_not_an_error() {
-        switch_image_model("http://127.0.0.1:9/image", "anything")
+        switch_image_model("http://127.0.0.1:9/image", "anything", false)
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn an_explicit_switch_says_when_the_switcher_is_not_there() {
+        let error = switch_image_model("http://127.0.0.1:9/image", "anything", true)
+            .await
+            .err()
+            .unwrap();
+        assert!(error.contains("did not answer"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn the_list_comes_from_the_switcher() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/image"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "model": "qwen-image-2.1-turbo-F16",
+                "models": ["qwen-image-2.1-turbo-F16", "qwen-image-2.1-turbo-Q8_0"],
+            })))
+            .mount(&server)
+            .await;
+        let list = list_image_models(&format!("{}/image", server.uri()))
+            .await
+            .unwrap();
+        assert_eq!(list.current.as_deref(), Some("qwen-image-2.1-turbo-F16"));
+        assert_eq!(list.models.len(), 2);
     }
 
     #[tokio::test]

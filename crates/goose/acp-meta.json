@@ -416,6 +416,16 @@
       "responseType": "EmptyResponse"
     },
     {
+      "method": "_goose/unstable/image/models",
+      "requestType": "ImageModelsRequest_unstable",
+      "responseType": "ImageModelsResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/image/switch",
+      "requestType": "SwitchImageModelRequest_unstable",
+      "responseType": "EmptyResponse"
+    },
+    {
       "method": "_goose/unstable/session/archive",
       "requestType": "ArchiveSessionRequest_unstable",
       "responseType": "EmptyResponse"

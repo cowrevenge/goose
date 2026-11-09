@@ -14,6 +14,7 @@ import { GitBranchIndicator } from './GitBranchIndicator';
 import ModelsBottomBar from './settings/models/bottom_bar/ModelsBottomBar';
 import { BottomMenuExtensionSelection } from './bottom_menu/BottomMenuExtensionSelection';
 import { LoopToggle } from './bottom_menu/LoopToggle';
+import { ImageModelPicker } from './bottom_menu/ImageModelPicker';
 import { cn } from '../utils';
 import { AlertType, useAlerts } from './alerts';
 import { useModelAndProvider } from './ModelAndProviderContext';
@@ -73,10 +74,7 @@ interface PastedImage {
   error?: string;
 }
 
-type ChatInputLiveVoice = Pick<
-  LiveVoiceController,
-  'phase' | 'muted' | 'stop' | 'toggleMute'
-> & {
+type ChatInputLiveVoice = Pick<LiveVoiceController, 'phase' | 'muted' | 'stop' | 'toggleMute'> & {
   availability: LiveVoiceAvailabilityResponse_unstable | null;
   activeInAnotherSession: boolean;
   start: () => Promise<void>;
@@ -1739,6 +1737,9 @@ export default function ChatInput({
             />
           </div>
         </Tooltip>
+
+        {/* Left: image model (the local image server's, switched through StrataTray) */}
+        <ImageModelPicker isLoading={isLoading} />
 
         {/* Left: loop on/off (the session's /grind goal) */}
         {sessionId && (

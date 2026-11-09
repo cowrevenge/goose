@@ -4993,6 +4993,55 @@
       "x-side": "agent",
       "x-method": "_goose/unstable/session/grind"
     },
+    "ImageModelsRequest_unstable": {
+      "type": "object",
+      "description": "The local image models the switcher (StrataTray's control port) offers, and the one in use.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/image/models"
+    },
+    "ImageModelsResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "current": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "models": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "description": "Image models response. `error` is set (and the lists empty) when the switcher cannot be asked.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/image/models"
+    },
+    "SwitchImageModelRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "model": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "model"
+      ],
+      "description": "Put an image model on the local image server (the switcher restarts it when needed).",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/image/switch"
+    },
     "ArchiveSessionRequest_unstable": {
       "type": "object",
       "properties": {
@@ -7840,6 +7889,24 @@
                 {
                   "allOf": [
                     {
+                      "$ref": "#/$defs/ImageModelsRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/image/models",
+                  "title": "ImageModelsRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/SwitchImageModelRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/image/switch",
+                  "title": "SwitchImageModelRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
                       "$ref": "#/$defs/ArchiveSessionRequest_unstable"
                     }
                   ],
@@ -8574,6 +8641,14 @@
                         }
                       ],
                       "title": "GetSessionInfoResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/ImageModelsResponse_unstable"
+                        }
+                      ],
+                      "title": "ImageModelsResponse_unstable"
                     },
                     {
                       "allOf": [

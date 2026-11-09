@@ -1502,6 +1502,21 @@
   "huggingFaceSignInPrompt.title": {
     "defaultMessage": "Hugging Face"
   },
+  "imageModelPicker.failed": {
+    "defaultMessage": "Could not switch the image model"
+  },
+  "imageModelPicker.image": {
+    "defaultMessage": "Image"
+  },
+  "imageModelPicker.imageModel": {
+    "defaultMessage": "Image model"
+  },
+  "imageModelPicker.restartHint": {
+    "defaultMessage": "Switching restarts the model server."
+  },
+  "imageModelPicker.switching": {
+    "defaultMessage": "Switching…"
+  },
   "imagePreview.altText": {
     "defaultMessage": "goose image"
   },

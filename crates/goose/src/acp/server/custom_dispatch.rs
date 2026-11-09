@@ -694,6 +694,39 @@ impl GooseAcpAgent {
         self.on_set_session_grind(req).await
     }
 
+    #[custom_method(ImageModelsRequest)]
+    async fn dispatch_image_models(
+        &self,
+        _req: ImageModelsRequest,
+    ) -> Result<ImageModelsResponse, agent_client_protocol::Error> {
+        use crate::agents::platform_extensions::developer::generate;
+        Ok(
+            match generate::list_image_models(&generate::image_switch_url()).await {
+                Ok(list) => ImageModelsResponse {
+                    current: list.current,
+                    models: list.models,
+                    error: None,
+                },
+                Err(error) => ImageModelsResponse {
+                    error: Some(error),
+                    ..Default::default()
+                },
+            },
+        )
+    }
+
+    #[custom_method(SwitchImageModelRequest)]
+    async fn dispatch_switch_image_model(
+        &self,
+        req: SwitchImageModelRequest,
+    ) -> Result<EmptyResponse, agent_client_protocol::Error> {
+        use crate::agents::platform_extensions::developer::generate;
+        generate::switch_image_model(&generate::image_switch_url(), req.model.trim(), true)
+            .await
+            .map_err(|error| agent_client_protocol::Error::internal_error().data(error))?;
+        Ok(EmptyResponse {})
+    }
+
     #[custom_method(ArchiveSessionRequest)]
     async fn dispatch_archive_session(
         &self,

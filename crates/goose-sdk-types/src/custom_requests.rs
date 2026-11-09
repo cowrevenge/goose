@@ -796,6 +796,32 @@ pub struct SetSessionGrindRequest {
     pub goal: Option<String>,
 }
 
+/// The local image models the switcher (StrataTray's control port) offers, and the one in use.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(method = "_goose/unstable/image/models", response = ImageModelsResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageModelsRequest {}
+
+/// Image models response. `error` is set (and the lists empty) when the switcher cannot be asked.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageModelsResponse {
+    #[serde(default)]
+    pub current: Option<String>,
+    #[serde(default)]
+    pub models: Vec<String>,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+/// Put an image model on the local image server (the switcher restarts it when needed).
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(method = "_goose/unstable/image/switch", response = EmptyResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct SwitchImageModelRequest {
+    pub model: String,
+}
+
 /// Archive a session (soft delete).
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
 #[request(method = "_goose/unstable/session/archive", response = EmptyResponse)]

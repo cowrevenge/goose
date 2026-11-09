@@ -12,7 +12,7 @@ use crate::agents::ToolCallContext;
 use anyhow::Result;
 use async_trait::async_trait;
 use edit::{EditTools, FileEditParams, FileWriteParams};
-use generate::{GenerateTool, ImageGenerateParams};
+use generate::{GenerateTool, ImageGenerateParams, ImageModelParams};
 use image::{ImageReadParams, ImageTool};
 use indoc::indoc;
 use read::{FileReadParams, ReadTool};
@@ -265,6 +265,21 @@ impl DeveloperClient {
                 Some(false),
                 Some(false),
             )),
+            Tool::new(
+                "image_model".to_string(),
+                "List the local image models and which one is in use, or switch to another (pass `model`). \
+                 Switching restarts the model server, so only switch when a different image model is \
+                 actually wanted; generate_image also takes `model` and switches by itself."
+                    .to_string(),
+                Self::schema::<ImageModelParams>(),
+            )
+            .annotate(ToolAnnotations::from_raw(
+                Some("Image Model".to_string()),
+                Some(false),
+                Some(false),
+                Some(true),
+                Some(false),
+            )),
         ]
     }
 }
@@ -340,6 +355,12 @@ impl McpClientTrait for DeveloperClient {
                     "Error: {error}"
                 ))])),
             },
+            "image_model" => match Self::parse_args::<ImageModelParams>(arguments) {
+                Ok(params) => Ok(generate::image_model_tool(params).await),
+                Err(error) => Ok(CallToolResult::error(vec![visible_text(format!(
+                    "Error: {error}"
+                ))])),
+            },
             "read_image" => match Self::parse_args::<ImageReadParams>(arguments) {
                 Ok(params) => Ok(self
                     .image_tool
@@ -383,7 +404,8 @@ mod tests {
                 "shell",
                 "tree",
                 "read_image",
-                "generate_image"
+                "generate_image",
+                "image_model"
             ]
         );
     }

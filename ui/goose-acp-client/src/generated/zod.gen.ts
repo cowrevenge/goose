@@ -1623,6 +1623,27 @@ export const zSetSessionGrindRequest_unstable = z.object({
 });
 
 /**
+ * The local image models the switcher (StrataTray's control port) offers, and the one in use.
+ */
+export const zImageModelsRequest_unstable = z.record(z.string(), z.unknown());
+
+/**
+ * Image models response. `error` is set (and the lists empty) when the switcher cannot be asked.
+ */
+export const zImageModelsResponse_unstable = z.object({
+    current: z.string().nullish().default(null),
+    models: z.array(z.string()).optional().default([]),
+    error: z.string().nullish().default(null)
+});
+
+/**
+ * Put an image model on the local image server (the switcher restarts it when needed).
+ */
+export const zSwitchImageModelRequest_unstable = z.object({
+    model: z.string()
+});
+
+/**
  * Archive a session (soft delete).
  */
 export const zArchiveSessionRequest_unstable = z.object({
@@ -2400,6 +2421,8 @@ export const zExtRequest = z.object({
             zUpdateSessionProjectRequest_unstable,
             zRenameSessionRequest_unstable,
             zSetSessionGrindRequest_unstable,
+            zImageModelsRequest_unstable,
+            zSwitchImageModelRequest_unstable,
             zArchiveSessionRequest_unstable,
             zUnarchiveSessionRequest_unstable,
             zCreateSourceRequest_unstable,
@@ -2495,6 +2518,7 @@ export const zExtResponse = z.union([
                 zKillRunningJobResponse_unstable,
                 zInspectRunningJobResponse_unstable,
                 zGetSessionInfoResponse_unstable,
+                zImageModelsResponse_unstable,
                 zCreateSourceResponse_unstable,
                 zListSourcesResponse_unstable,
                 zListAgentMentionsResponse_unstable,
