@@ -1762,7 +1762,9 @@ export default function ChatInput({
                 size="sm"
                 shape="round"
                 className={cn(
-                  'text-text-primary/70 hover:text-text-primary transition-colors',
+                  // -ml-2: the round button pads its icon by 8px; this lines the icon up
+                  // with the model icon on row 1.
+                  '-ml-2 text-text-primary/70 hover:text-text-primary transition-colors',
                   isFilePickerOpen ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
                 )}
               >
