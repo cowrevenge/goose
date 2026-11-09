@@ -440,6 +440,17 @@ export default function MessageList({
             <ThinkingContent content={group.finalThinking} isExpanded={false} />
           )}
         </TurnWorkSection>
+        {/* What the turn drew stays in view, outside the fold: it is what was asked for. */}
+        {!showingErrors &&
+          group.images.map((image, i) => (
+            <img
+              key={i}
+              data-testid="turn-image"
+              src={`data:${image.mimeType};base64,${image.data}`}
+              alt={image.alt}
+              className="my-2 max-h-[32rem] max-w-full rounded-md"
+            />
+          ))}
       </div>
     );
     if (group.final && !showingErrors) {

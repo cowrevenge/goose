@@ -73,6 +73,29 @@ describe('groupIntoTurns', () => {
     });
   });
 
+  it('lifts a generated picture out of the folded work part', () => {
+    const png = { type: 'image', data: 'AAAA', mimeType: 'image/png' };
+    const [turn] = turns(
+      group([
+        msg('u1', 'user', [text('draw billy')]),
+        msg('a1', 'assistant', [
+          call('t1', 'developer__generate_image', { prompt: 'a 1920s cartoon mouse on a boat' }),
+        ]),
+        msg('r1', 'user', [
+          {
+            type: 'toolResponse',
+            id: 't1',
+            toolResult: { status: 'success', value: { content: [png], isError: false } },
+          } as MessageContent,
+        ]),
+        msg('a2', 'assistant', [text('Billy is ready.')], 5),
+      ])
+    );
+    expect(turn.images).toEqual([
+      { data: 'AAAA', mimeType: 'image/png', alt: 'a 1920s cartoon mouse on a boat' },
+    ]);
+  });
+
   it('has no answer while the turn is still on a tool call', () => {
     const [turn] = turns(
       group([

@@ -47,8 +47,17 @@ export type DisplayGroup =
       final: DisplayedEntry | null;
       /** The final message's thinking, shown at the end of the work part. */
       finalThinking: string | null;
+      /** Pictures the turn's tools made (generate_image), shown outside the folded work part. */
+      images: MadeImage[];
       stats: TurnStats;
     };
+
+export interface MadeImage {
+  data: string;
+  mimeType: string;
+  /** What was asked for (the prompt), for the alt text. */
+  alt: string;
+}
 
 /** A user-role message that only carries tool results (or nothing yet): part of the agent's turn. */
 export function isToolResponseOnly(message: Message): boolean {
@@ -227,6 +236,7 @@ function buildTurn(
   let hasThinking = finalThinking !== null;
   let needsAttention = false;
   let activity: string | null = null;
+  const images: MadeImage[] = [];
 
   for (const { message, index } of work) {
     const requests = getToolRequests(message);
@@ -235,6 +245,12 @@ function buildTurn(
       toolCalls++;
       const state = states[i];
       if (state?.response && isFailedResult(state.response.toolResult)) failedToolCalls++;
+      if (state?.response && classifyToolCall(request.toolCall) === 'image') {
+        const alt = toolCallTarget(request.toolCall) ?? '';
+        for (const image of toolResultImages(state.response.toolResult)) {
+          images.push({ ...image, alt });
+        }
+      }
       if (state?.isPending) needsAttention = true;
       activity = describeToolCall(request.toolCall) ?? activity;
     });
@@ -271,6 +287,7 @@ function buildTurn(
       work,
       final,
       finalThinking,
+      images,
       stats: {
         durationS,
         startedAt: firstAssistant.message.created,

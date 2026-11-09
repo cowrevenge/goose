@@ -101,7 +101,7 @@ describe('GooseMessage', () => {
     expect(screen.queryByText('full card t2')).toBeNull();
   });
 
-  it('keeps a generated image in view under its row', () => {
+  it('shows the image call as one row; the picture itself is shown by the turn', () => {
     const message: Message = {
       content: [call('g1', 'developer__generate_image', { prompt: 'a red fox in snow' })],
       created: 1,
@@ -144,8 +144,8 @@ describe('GooseMessage', () => {
 
     expect(screen.getByText('Generated an image')).toBeInTheDocument();
     expect(screen.getByText('a red fox in snow')).toBeInTheDocument();
-    const img = screen.getByAltText('a red fox in snow');
-    expect(img.getAttribute('src')).toBe('data:image/png;base64,AAAA');
+    // The turn shows the picture outside its fold (MessageList), so the folded row must not repeat it.
+    expect(screen.queryByAltText('a red fox in snow')).toBeNull();
   });
 
   it('shows only the failed calls when asked', () => {

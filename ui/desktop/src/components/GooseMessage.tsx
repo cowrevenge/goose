@@ -11,7 +11,6 @@ import {
   isFailedResult,
   toolCallName,
   toolCallTarget,
-  toolResultImages,
 } from '../utils/turnGrouping';
 import {
   getTextAndImageContent,
@@ -157,9 +156,6 @@ function GooseMessage({
           );
           if (onlyFailed && !failed) return null;
           const kind = classifyToolCall(toolRequest.toolCall);
-          // A picture the agent made stays in view under its row; that is what it was made for.
-          const madeImages =
-            kind === 'image' && !failed ? toolResultImages(toolState.response?.toolResult) : [];
           // Waiting for the user: show it in full so the buttons are right there.
           if (toolState.isPending) {
             return (
@@ -178,14 +174,6 @@ function GooseMessage({
               >
                 {renderToolCall(toolRequest, toolIndex)}
               </CompactStepRow>
-              {madeImages.map((image, i) => (
-                <img
-                  key={i}
-                  src={`data:${image.mimeType};base64,${image.data}`}
-                  alt={toolCallTarget(toolRequest.toolCall) ?? ''}
-                  className="my-2 ml-[18px] max-h-96 max-w-full rounded-md"
-                />
-              ))}
             </div>
           );
         })}
