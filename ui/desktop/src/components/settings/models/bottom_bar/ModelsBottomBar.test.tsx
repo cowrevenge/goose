@@ -39,10 +39,6 @@ vi.mock('../predefinedModelsUtils', () => ({
   getModelDisplayName: (model: string) => `Display ${model}`,
 }));
 
-vi.mock('../../../bottom_menu/BottomMenuAlertPopover', () => ({
-  default: () => null,
-}));
-
 vi.mock('../../../ui/dropdown-menu', () => ({
   DropdownMenu: ({
     children,

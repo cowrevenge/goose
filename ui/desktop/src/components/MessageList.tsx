@@ -437,7 +437,7 @@ export default function MessageList({
             renderRow(entry, { compact: true, onlyFailed: showingErrors })
           )}
           {group.finalThinking && !showingErrors && (
-            <ThinkingContent content={group.finalThinking} isExpanded={false} />
+            <ThinkingContent content={group.finalThinking} />
           )}
         </TurnWorkSection>
         {/* What the turn drew stays in view, outside the fold: it is what was asked for. */}

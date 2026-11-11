@@ -1,6 +1,6 @@
 use super::*;
 
-impl GooseAcpAgent {
+impl AcpConnection {
     pub(super) async fn on_update_working_dir(
         &self,
         req: UpdateWorkingDirRequest,
@@ -15,6 +15,7 @@ impl GooseAcpAgent {
         let session_id = &req.session_id;
 
         let session = self
+            .services
             .session_manager
             .get_session(session_id, false)
             .await
@@ -23,24 +24,26 @@ impl GooseAcpAgent {
                     .data(format!("Session not found: {}", session_id))
             })?;
 
-        // Save the new folder before touching the agent: activating a session that is not loaded
+        // Save the new folder before opening the session: activating a session that is not loaded
         // yet uses its stored folder, and a session whose folder was deleted or renamed could
         // never be moved to a working one otherwise.
-        self.session_manager
+        self.services
+            .session_manager
             .update(&session.id)
             .working_dir(path)
             .apply()
             .await
             .internal_err_ctx("Failed to update working directory")?;
-        let agent = self.get_session_agent(session_id).await?;
+        self.open_session(session_id).await?;
 
         let session = self
+            .services
             .session_manager
             .get_session(session_id, false)
             .await
             .internal_err_ctx("Failed to reload session")?;
-        agent.config.providers.release(&session.id);
-        agent
+        self.services.providers.release(&session.id);
+        self.services
             .restore_provider_from_session(&session)
             .await
             .internal_err_ctx("Failed to refresh provider from session")?;
@@ -62,6 +65,7 @@ impl GooseAcpAgent {
         let text = Some(req.text).filter(|text| !text.trim().is_empty());
         match req.mode {
             SessionSystemPromptMode::Set => self
+                .services
                 .session_manager
                 .update(session_id)
                 .system_prompt_override(text)
@@ -78,7 +82,8 @@ impl GooseAcpAgent {
                         agent_client_protocol::Error::invalid_params()
                             .data("key cannot be empty for append mode")
                     })?;
-                self.session_manager
+                self.services
+                    .session_manager
                     .set_system_prompt_extra(session_id, key, text)
                     .await
                     .internal_err()?
@@ -93,17 +98,14 @@ impl GooseAcpAgent {
         req: DeleteSessionRequest,
     ) -> Result<DeleteSessionResponse, agent_client_protocol::Error> {
         let session_id = req.session_id.0.to_string();
-        self.active_runs.cancel_agent_run(&session_id);
+        self.runs().cancel_agent_run(&session_id);
         self.live_voice.stop_session_interaction(&session_id).await;
-        self.session_manager
+        self.services
+            .session_manager
             .delete_session(&session_id)
             .await
             .internal_err()?;
-        self.sessions.lock().await.remove(&session_id);
-        self.agent_manager
-            .remove_session_if_loaded(&session_id)
-            .await
-            .internal_err_ctx("Failed to remove in-memory agent")?;
+        self.services.release_session(&session_id).await;
         Ok(DeleteSessionResponse::new())
     }
 
@@ -112,9 +114,15 @@ impl GooseAcpAgent {
         req: ExportSessionRequest,
     ) -> Result<ExportSessionResponse, agent_client_protocol::Error> {
         let data = match req.format {
-            SessionExportFormat::Json => self.session_manager.export_session(&req.session_id).await,
+            SessionExportFormat::Json => {
+                self.services
+                    .session_manager
+                    .export_session(&req.session_id)
+                    .await
+            }
             SessionExportFormat::Markdown => {
-                self.session_manager
+                self.services
+                    .session_manager
                     .export_session_markdown(&req.session_id)
                     .await
             }
@@ -128,6 +136,7 @@ impl GooseAcpAgent {
         req: ImportSessionRequest,
     ) -> Result<ImportSessionResponse, agent_client_protocol::Error> {
         let session = self
+            .services
             .session_manager
             .import_session(&req.input, None)
             .await
@@ -155,6 +164,7 @@ impl GooseAcpAgent {
         }
 
         let session = self
+            .services
             .session_manager
             .get_session(session_id, false)
             .await
@@ -179,7 +189,8 @@ impl GooseAcpAgent {
             );
         }
 
-        self.session_manager
+        self.services
+            .session_manager
             .truncate_conversation(session_id, req.truncate_from)
             .await
             .internal_err()?;
@@ -196,6 +207,7 @@ impl GooseAcpAgent {
                 .data(format!("Session not found: {session_id}"))
         };
         let updated = self
+            .services
             .session_manager
             .update_project_for_session_types(
                 session_id,
@@ -214,7 +226,8 @@ impl GooseAcpAgent {
         &self,
         req: RenameSessionRequest,
     ) -> Result<EmptyResponse, agent_client_protocol::Error> {
-        self.session_manager
+        self.services
+            .session_manager
             .update(&req.session_id)
             .user_provided_name(req.title)
             .apply()
@@ -232,6 +245,7 @@ impl GooseAcpAgent {
         use crate::session::extension_data::GoalState;
 
         let session = self
+            .services
             .session_manager
             .get_session(&req.session_id, false)
             .await
@@ -244,7 +258,8 @@ impl GooseAcpAgent {
             .goal
             .map(|goal| goal.trim().to_string())
             .filter(|goal| !goal.is_empty());
-        self.session_manager
+        self.services
+            .session_manager
             .set_extension_state(&req.session_id, &state)
             .await
             .internal_err()?;
@@ -255,17 +270,14 @@ impl GooseAcpAgent {
         &self,
         req: ArchiveSessionRequest,
     ) -> Result<EmptyResponse, agent_client_protocol::Error> {
-        self.session_manager
+        self.services
+            .session_manager
             .update(&req.session_id)
             .archived_at(Some(chrono::Utc::now()))
             .apply()
             .await
             .internal_err()?;
-        self.sessions.lock().await.remove(&req.session_id);
-        self.agent_manager
-            .remove_session_if_loaded(&req.session_id)
-            .await
-            .internal_err_ctx("Failed to remove in-memory agent")?;
+        self.services.release_session(&req.session_id).await;
         Ok(EmptyResponse {})
     }
 
@@ -273,7 +285,8 @@ impl GooseAcpAgent {
         &self,
         req: UnarchiveSessionRequest,
     ) -> Result<EmptyResponse, agent_client_protocol::Error> {
-        self.session_manager
+        self.services
+            .session_manager
             .update(&req.session_id)
             .archived_at(None)
             .apply()

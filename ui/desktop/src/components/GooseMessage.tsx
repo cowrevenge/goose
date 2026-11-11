@@ -12,6 +12,7 @@ import {
   toolCallName,
   toolCallTarget,
 } from '../utils/turnGrouping';
+import FinalOutputLine, { isFinalOutputToolRequest } from './FinalOutputLine';
 import {
   getTextAndImageContent,
   getThinkingContent,
@@ -201,15 +202,7 @@ function GooseMessage({
       <div className="flex flex-col w-full min-w-0">
         {thinkingContent && (
           <div className="group">
-            <ThinkingContent
-              content={thinkingContent}
-              isExpanded={
-                isStreaming &&
-                !displayText.trim() &&
-                imagePaths.length === 0 &&
-                toolRequests.length === 0
-              }
-            />
+            <ThinkingContent content={thinkingContent} />
             {!displayText.trim() && imagePaths.length === 0 && toolRequests.length === 0 && (
               <div className="relative flex items-center justify-between">
                 <div
@@ -281,7 +274,14 @@ function GooseMessage({
               <div className="flex flex-col gap-3">
                 {toolRequests.map((toolRequest, toolIndex) => (
                   <div className="goose-message-tool" key={toolRequest.id}>
-                    {renderToolCall(toolRequest, toolIndex)}
+                    {isFinalOutputToolRequest(toolRequest) ? (
+                      <FinalOutputLine
+                        toolResponse={toolStates[toolIndex].response}
+                        isStreaming={isStreaming}
+                      />
+                    ) : (
+                      renderToolCall(toolRequest, toolIndex)
+                    )}
                   </div>
                 ))}
               </div>

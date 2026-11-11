@@ -1,4 +1,4 @@
-pub mod edit;
+mod edit;
 pub mod generate;
 pub mod image;
 pub mod read;
@@ -167,7 +167,7 @@ impl DeveloperClient {
             .clone()
     }
 
-    pub fn parse_args<T: serde::de::DeserializeOwned>(
+    fn parse_args<T: serde::de::DeserializeOwned>(
         arguments: Option<JsonObject>,
     ) -> Result<T, String> {
         let value = arguments
