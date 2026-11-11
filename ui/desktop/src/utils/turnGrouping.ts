@@ -213,17 +213,20 @@ export function isFailedResult(toolResult: unknown): boolean {
 function buildTurn(
   entries: DisplayedEntry[],
   rowContexts: readonly MessageRowContext[],
-  pendingConfirmationIds: ReadonlySet<string>
+  pendingConfirmationIds: ReadonlySet<string>,
+  listThinking: boolean
 ): DisplayGroup[] {
+  // With thinking not listed ("Show Thinking: Never"), a turn is built as if it had none.
+  const thinkingOf = (message: Message) => (listThinking ? getThinkingContent(message) : null);
   const last = entries[entries.length - 1];
   const final = isAnswerMessage(last.message) ? last : null;
   const work = final ? entries.slice(0, -1) : entries;
-  const finalThinking = final ? getThinkingContent(final.message) : null;
+  const finalThinking = final ? thinkingOf(final.message) : null;
 
   // Text between steps only counts as work when there are steps: a run of plain replies with no
   // tool calls and no thinking renders as it always did.
   const workHasActivity = work.some(
-    ({ message }) => getToolRequests(message).length > 0 || getThinkingContent(message) !== null
+    ({ message }) => getToolRequests(message).length > 0 || thinkingOf(message) !== null
   );
 
   // A plain reply with nothing behind it: render it as it always was.
@@ -254,7 +257,7 @@ function buildTurn(
       if (state?.isPending) needsAttention = true;
       activity = describeToolCall(request.toolCall) ?? activity;
     });
-    if (getThinkingContent(message) !== null) hasThinking = true;
+    if (thinkingOf(message) !== null) hasThinking = true;
 
     const confirmation = getAnyToolConfirmationData(message);
     if (confirmation && pendingConfirmationIds.has(confirmation.id)) needsAttention = true;
@@ -272,7 +275,7 @@ function buildTurn(
     const pendingRequests = getToolRequests(lastWork.message);
     if (pendingRequests.length > 0) {
       activity = describeToolCall(pendingRequests[pendingRequests.length - 1].toolCall) ?? activity;
-    } else if (getThinkingContent(lastWork.message) !== null) {
+    } else if (thinkingOf(lastWork.message) !== null) {
       activity = 'Thinking';
     }
   }
@@ -308,6 +311,8 @@ export function groupIntoTurns(
     isNotification: (message: Message) => boolean;
     rowContexts: readonly MessageRowContext[];
     pendingConfirmationIds: ReadonlySet<string>;
+    /** False when the "Show Thinking" setting is "Never": thinking then makes no steps. Default true. */
+    listThinking?: boolean;
     /** Displayed positions where a turn must not continue across (e.g. the "hidden messages" marker). */
     breakBefore?: ReadonlySet<number>;
   }
@@ -317,7 +322,14 @@ export function groupIntoTurns(
 
   const flush = () => {
     if (current.length > 0) {
-      groups.push(...buildTurn(current, options.rowContexts, options.pendingConfirmationIds));
+      groups.push(
+        ...buildTurn(
+          current,
+          options.rowContexts,
+          options.pendingConfirmationIds,
+          options.listThinking ?? true
+        )
+      );
       current = [];
     }
   };

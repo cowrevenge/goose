@@ -4,7 +4,8 @@ import Expand from './ui/Expand';
 import MarkdownContent from './MarkdownContent';
 import { cn } from '../utils';
 import { defineMessages, useIntl } from '../i18n';
-import { StepsStartCollapsedContext } from './turnWorkContext';
+import { StepsStartCollapsedContext, useTurnWorkOpen } from './turnWorkContext';
+import { useShowThinking } from '../hooks/useShowThinking';
 import type { StepKind } from '../utils/turnGrouping';
 
 const i18n = defineMessages({
@@ -35,18 +36,30 @@ interface CompactStepRowProps {
   detail?: string | null;
   failed?: boolean;
   running?: boolean;
+  /** Open until it is clicked shut (thinking, when the setting says to always show it). */
+  startOpen?: boolean;
   /** What opens under the row when it is clicked. */
   children: ReactNode;
 }
 
 /** One step of a turn on one line: click it to see that step in full. */
-export function CompactStepRow({ label, detail, failed, running, children }: CompactStepRowProps) {
-  const [open, setOpen] = useState(false);
+export function CompactStepRow({
+  label,
+  detail,
+  failed,
+  running,
+  startOpen = false,
+  children,
+}: CompactStepRowProps) {
+  const [clicked, setClicked] = useState<boolean | null>(null);
+  const sectionOpen = useTurnWorkOpen();
+  const open = clicked ?? (startOpen && sectionOpen);
   return (
     <div className="compact-step min-w-0">
       <button
         type="button"
-        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+        onClick={() => setClicked(!open)}
         className="flex w-full min-w-0 items-center gap-1.5 py-0.5 text-left text-xs text-text-secondary hover:text-text-primary transition-colors cursor-pointer"
       >
         {running ? (
@@ -67,6 +80,28 @@ export function CompactStepRow({ label, detail, failed, running, children }: Com
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * A thinking block as a step. The "Show Thinking" setting decides how: listed closed
+ * ("Collapsed"), listed already open ("Always"), or not listed at all ("Never").
+ */
+export function ThinkingStepRow({ content, running }: { content: string; running?: boolean }) {
+  const showThinking = useShowThinking();
+  const stepLabel = useStepLabel();
+  // Wait for the setting, so "Never" and "Always" do not flash a closed row first.
+  if (showThinking === null || showThinking === 'never') return null;
+  return (
+    <CompactStepRow
+      label={stepLabel('thinking')}
+      running={running}
+      startOpen={showThinking === 'always'}
+    >
+      <div className="text-sm text-text-secondary">
+        <MarkdownContent content={content} />
+      </div>
+    </CompactStepRow>
   );
 }
 

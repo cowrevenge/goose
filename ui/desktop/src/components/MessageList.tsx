@@ -3,9 +3,11 @@ import { isEqual } from 'lodash';
 import { defineMessages, useIntl } from '../i18n';
 import GooseMessage from './GooseMessage';
 import UserMessage from './UserMessage';
-import ThinkingContent from './ThinkingContent';
+import CompactMessage from './CompactMessage';
+import { ThinkingStepRow } from './CompactStepRow';
 import { AlertTriangle } from 'lucide-react';
 import TurnWorkSection from './TurnWorkSection';
+import { useShowThinking } from '../hooks/useShowThinking';
 import {
   SystemNotificationInline,
   getInlineSystemNotification,
@@ -153,6 +155,18 @@ function MessageRowComponent({
           !hasOnlyToolResponses && (
             <UserMessage message={message} onMessageUpdate={onMessageUpdate} />
           )
+        ) : compact ? (
+          <CompactMessage
+            sessionId={sessionId}
+            message={message}
+            toolStates={rowContext.toolStates}
+            toolNotifications={toolNotifications}
+            toolConfirmationShownInline={rowContext.toolConfirmationShownInline}
+            append={append}
+            isStreaming={isStreaming}
+            onlyFailed={onlyFailed}
+            submitElicitationResponse={submitElicitationResponse}
+          />
         ) : (
           <GooseMessage
             sessionId={sessionId}
@@ -164,8 +178,6 @@ function MessageRowComponent({
             append={append}
             isStreaming={isStreaming}
             hideThinking={hideThinking}
-            compact={compact}
-            onlyFailed={onlyFailed}
             submitElicitationResponse={submitElicitationResponse}
           />
         )}
@@ -211,6 +223,9 @@ export default function MessageList({
   const [showAllMessages, setShowAllMessages] = useState(false);
   // Every failed tool call in the session, in place, so they can be tracked down one by one.
   const [errorsOnly, setErrorsOnly] = useState(false);
+  // "Never" keeps thinking out of the turns altogether; until the setting is read, group as if
+  // it is listed (the default), and the thinking steps themselves wait for it.
+  const listThinking = useShowThinking() !== 'never';
   const visibleMessages = useMemo(
     () =>
       messages.flatMap((message, index) =>
@@ -289,6 +304,7 @@ export default function MessageList({
         isNotification: (message) => getSystemNotification(message) !== undefined,
         rowContexts,
         pendingConfirmationIds,
+        listThinking,
         breakBefore:
           !showingErrors && hiddenMessageCount > 0 ? new Set([HEAD_MESSAGE_COUNT]) : undefined,
       }),
@@ -297,6 +313,7 @@ export default function MessageList({
       isUserMessage,
       rowContexts,
       pendingConfirmationIds,
+      listThinking,
       hiddenMessageCount,
       showingErrors,
     ]
@@ -437,7 +454,7 @@ export default function MessageList({
             renderRow(entry, { compact: true, onlyFailed: showingErrors })
           )}
           {group.finalThinking && !showingErrors && (
-            <ThinkingContent content={group.finalThinking} />
+            <ThinkingStepRow content={group.finalThinking} />
           )}
         </TurnWorkSection>
         {/* What the turn drew stays in view, outside the fold: it is what was asked for. */}

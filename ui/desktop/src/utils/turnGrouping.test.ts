@@ -32,7 +32,7 @@ const result = (id: string, isError = false): MessageContent => ({
   toolResult: { status: 'success', value: { content: [], isError } },
 });
 
-function group(messages: Message[]): DisplayGroup[] {
+function group(messages: Message[], listThinking?: boolean): DisplayGroup[] {
   return groupIntoTurns(
     messages.map((message, index) => ({ message, index })),
     {
@@ -40,6 +40,7 @@ function group(messages: Message[]): DisplayGroup[] {
       isNotification: () => false,
       rowContexts: deriveMessageRowContexts(messages),
       pendingConfirmationIds: new Set(),
+      listThinking,
     }
   );
 }
@@ -125,6 +126,44 @@ describe('groupIntoTurns', () => {
     expect(turn.work).toEqual([]);
     expect(turn.final?.message.id).toBe('a1');
     expect(turn.finalThinking).toBe('hmm');
+  });
+
+  it('builds turns as if there were no thinking when thinking is not listed', () => {
+    // A reply whose only work was thinking is a plain reply again.
+    const plain = group(
+      [msg('u1', 'user', [text('hi')]), msg('a1', 'assistant', [thinking('hmm'), text('hello')])],
+      false
+    );
+    expect(plain.map((g) => g.kind)).toEqual(['single', 'single']);
+
+    // A turn with tool calls keeps its work section, without the thinking.
+    const [turn] = turns(
+      group(
+        [
+          msg('u1', 'user', [text('check')]),
+          msg('a1', 'assistant', [thinking('plan'), call('t1')], 10),
+          msg('r1', 'user', [result('t1')]),
+          msg('a2', 'assistant', [thinking('done'), text('Answer.')], 20),
+        ],
+        false
+      )
+    );
+    expect(turn.finalThinking).toBeNull();
+    expect(turn.stats).toMatchObject({ toolCalls: 1, hasThinking: false });
+
+    // While the model is only thinking, the live line does not say so.
+    const [running] = turns(
+      group(
+        [
+          msg('u1', 'user', [text('check')]),
+          msg('a1', 'assistant', [call('t1', 'developer__shell', { command: 'ls' })], 10),
+          msg('r1', 'user', [result('t1')]),
+          msg('a2', 'assistant', [thinking('what next')], 20),
+        ],
+        false
+      )
+    );
+    expect(running.stats.activity).toBe('shell: ls');
   });
 
   it('starts a new turn at every real user message', () => {

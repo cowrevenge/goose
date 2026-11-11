@@ -8,7 +8,8 @@ Local changes on top of an upstream Goose release, built and installed on Window
   (thinking, tool calls, tool results, text written between tool calls) plus an always-visible
   final answer, the way claude.ai shows a turn. Live status line while running, a one-line summary
   when done (`Worked for 2m 14s · 6 tool calls · 1 failed`), opens by itself for a pending tool
-  approval or a turn that ended without an answer.
+  approval or a turn that ended without an answer. Thinking steps follow the Show Thinking setting
+  (Settings > Chat): Collapsed lists each as a closed line, Always lists it open, Never leaves it out.
 - **`cow/cow-goose.ps1`**: build the desktop app from this checkout and install it over `C:\Goose`.
 
 ## Build and install (Windows)

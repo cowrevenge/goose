@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, render, screen } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import type { IpcRendererEvent } from 'electron';
 import type { ImageData, InferenceMetadata, Message, MessageContent } from '../types/message';
+import { AppEvents } from '../constants/events';
 import { IntlTestWrapper } from '../i18n/test-utils';
 import MessageList from './MessageList';
 
@@ -21,22 +22,20 @@ const messageUpdateCallbacks = vi.hoisted(
 );
 
 vi.mock('./GooseMessage', () => ({
-  default: ({
-    message,
-    compact,
-    onlyFailed,
-  }: {
-    message: Message;
-    compact?: boolean;
-    onlyFailed?: boolean;
-  }) => {
+  default: ({ message }: { message: Message }) => {
+    const id = message.id ?? 'missing-id';
+    renderCounts.set(id, (renderCounts.get(id) ?? 0) + 1);
+    return <div>{id}</div>;
+  },
+}));
+
+// What a turn's work section lists instead of the full message.
+vi.mock('./CompactMessage', () => ({
+  default: ({ message, onlyFailed }: { message: Message; onlyFailed?: boolean }) => {
     const id = message.id ?? 'missing-id';
     renderCounts.set(id, (renderCounts.get(id) ?? 0) + 1);
     return (
-      <div
-        data-compact={compact ? 'true' : undefined}
-        data-only-failed={onlyFailed ? 'true' : undefined}
-      >
+      <div data-compact="true" data-only-failed={onlyFailed ? 'true' : undefined}>
         {id}
       </div>
     );
@@ -398,6 +397,28 @@ describe('MessageList turn grouping', () => {
     // Inside the work, every step is drawn one line at a time; the answer is drawn in full.
     expect(screen.getByText('a1').getAttribute('data-compact')).toBe('true');
     expect(screen.getByText('a2').getAttribute('data-compact')).toBeNull();
+  });
+
+  it("folds a reply's thinking behind a line, unless thinking is set to Never", async () => {
+    const thought: MessageContent = { type: 'thinking', thinking: 'hmm', signature: '' };
+    renderList([
+      message('u1', 'user', [{ type: 'text', text: 'hi' }]),
+      { ...message('a1', 'assistant', [thought, { type: 'text', text: 'hello' }]), created: 10 },
+    ]);
+    expect(screen.getByRole('button', { name: /Thought for/ })).toBeInTheDocument();
+
+    await window.electron.setSetting('showThinking', 'never');
+    act(() => {
+      window.dispatchEvent(new CustomEvent(AppEvents.SHOW_THINKING_CHANGED));
+    });
+    await waitFor(() => expect(screen.queryByRole('button', { name: /Thought for/ })).toBeNull());
+    expect(screen.getByText('a1')).toBeInTheDocument();
+
+    await window.electron.setSetting('showThinking', 'collapsed');
+    act(() => {
+      window.dispatchEvent(new CustomEvent(AppEvents.SHOW_THINKING_CHANGED));
+    });
+    expect(await screen.findByRole('button', { name: /Thought for/ })).toBeInTheDocument();
   });
 
   it('has no errors switch when nothing failed', () => {
