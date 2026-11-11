@@ -217,11 +217,10 @@ pub fn convert(content: &str) -> Result<String> {
         name: &name,
         created_at,
         updated_at,
-        usage: Usage::new(Some(total_input as i64), Some(total_output as i64), None)
-            .with_cache_tokens(
-                (total_cache_read > 0).then_some(total_cache_read as i64),
-                (total_cache_write > 0).then_some(total_cache_write as i64),
-            ),
+        usage: Usage::new(Some(total_input), Some(total_output), None).with_cache_tokens(
+            (total_cache_read > 0).then_some(total_cache_read),
+            (total_cache_write > 0).then_some(total_cache_write),
+        ),
         accumulated_cost: (total_cost > 0.0).then_some(total_cost),
         conversation,
     });

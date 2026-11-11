@@ -995,14 +995,12 @@ pub fn get_usage(usage: &Value) -> Usage {
     let input_tokens = usage
         .get("prompt_tokens")
         .and_then(|v| v.as_i64())
-        .or_else(|| usage.get("prompt_eval_count").and_then(|v| v.as_i64()))
-        .map(|v| v as i64);
+        .or_else(|| usage.get("prompt_eval_count").and_then(|v| v.as_i64()));
 
     let output_tokens = usage
         .get("completion_tokens")
         .and_then(|v| v.as_i64())
-        .or_else(|| usage.get("eval_count").and_then(|v| v.as_i64()))
-        .map(|v| v as i64);
+        .or_else(|| usage.get("eval_count").and_then(|v| v.as_i64()));
 
     let cache_read_input_tokens = usage
         .get("cache_read_input_tokens")
@@ -1012,8 +1010,7 @@ pub fn get_usage(usage: &Value) -> Usage {
                 .get("prompt_tokens_details")
                 .and_then(|d| d.get("cached_tokens"))
                 .and_then(|v| v.as_i64())
-        })
-        .map(|v| v as i64);
+        });
 
     let cache_write_input_tokens = usage
         .get("cache_creation_input_tokens")
@@ -1023,13 +1020,11 @@ pub fn get_usage(usage: &Value) -> Usage {
                 .get("prompt_tokens_details")
                 .and_then(|d| d.get("cache_write_tokens"))
                 .and_then(|v| v.as_i64())
-        })
-        .map(|v| v as i64);
+        });
 
     let total_tokens = usage
         .get("total_tokens")
         .and_then(|v| v.as_i64())
-        .map(|v| v as i64)
         .or_else(|| match (input_tokens, output_tokens) {
             (Some(input), Some(output)) => Some(input.saturating_add(output)),
             _ => None,
