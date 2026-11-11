@@ -3,17 +3,27 @@ import {
   getElicitationContent,
   getTextAndImageContent,
   getThinkingContent,
+  getToolConfirmationContent,
   getToolRequests,
   type Message,
+  type ToolRequestMessageContent,
 } from '../types/message';
 import type { MessageRowContext } from '../components/messageRowContext';
 
 /**
- * Groups one agent turn (everything between two real user messages) into a work part that folds
- * into one line, and an always-visible final answer, the way claude.ai shows a turn. Opened, the
- * work is a flat list of one-line steps (thinking, the model's text, each tool call), each of
- * which opens on its own. Only the model's last text, written after its last tool call, is the
- * answer.
+ * Lays one agent turn (everything between two real user messages) out the way Claude's own
+ * transcript does:
+ *
+ *  - the model's text stays in view as text;
+ *  - every run of tool calls between two pieces of text folds into one row that says what the run
+ *    did ("Ran 3 commands, edited a file"), and opens to its calls one line each;
+ *  - a short note written on the way to a call ("Now the tests.") folds into that row with the
+ *    call, so a model that narrates each step does not break the work into one row per step.
+ *    Text before the turn's first call, and anything longer than a sentence or two, stays in view;
+ *  - a call that waits for approval is not in a row yet: its card is in view (see TurnRun), and
+ *    so is what the model wrote with it, until the call has run;
+ *  - thinking follows the "Show Thinking" setting: folded into the rows, in view, or left out;
+ *  - only the text after the last call is the answer, drawn in full.
  */
 
 export interface DisplayedEntry {
@@ -21,36 +31,12 @@ export interface DisplayedEntry {
   index: number;
 }
 
-export interface TurnStats {
-  /** Seconds from the turn's first assistant message to its last message. */
-  durationS: number;
-  /** When the turn's first assistant message was created (epoch seconds), for a live timer. */
-  startedAt: number;
-  toolCalls: number;
-  failedToolCalls: number;
-  hasThinking: boolean;
-  /** A tool approval or elicitation is waiting inside the work part. */
-  needsAttention: boolean;
-  /** Short description of what the turn is doing right now (for the live status line). */
-  activity: string | null;
-}
+/** What a tool call did, for its row and for the run's summary. */
+export type StepKind =
+  'command' | 'read' | 'write' | 'search' | 'list' | 'fetch' | 'image' | 'agent' | 'tool';
 
-/** What a tool call did, for its one-line row. */
-export type StepKind = 'read' | 'search' | 'list' | 'fetch' | 'command' | 'image' | 'tool';
-
-export type DisplayGroup =
-  | { kind: 'single'; entry: DisplayedEntry }
-  | {
-      kind: 'turn';
-      key: string;
-      work: DisplayedEntry[];
-      final: DisplayedEntry | null;
-      /** The final message's thinking, shown at the end of the work part. */
-      finalThinking: string | null;
-      /** Pictures the turn's tools made (generate_image), shown outside the folded work part. */
-      images: MadeImage[];
-      stats: TurnStats;
-    };
+/** Where thinking goes: into the rows ("Collapsed"), in view ("Always") or nowhere ("Never"). */
+export type ThinkingMode = 'fold' | 'show' | 'hide';
 
 export interface MadeImage {
   data: string;
@@ -58,6 +44,75 @@ export interface MadeImage {
   /** What was asked for (the prompt), for the alt text. */
   alt: string;
 }
+
+export interface ToolStep {
+  kind: 'tool';
+  /** The tool request's id. */
+  key: string;
+  /** The message the call is in. */
+  index: number;
+  /** Which of that message's tool requests this is. */
+  toolIndex: number;
+  request: ToolRequestMessageContent;
+  tool: StepKind;
+  /** The tool's own name without its extension prefix. */
+  name: string | null;
+  /** Its most telling argument (command, path, query...) on one line. */
+  target: string | null;
+  /** The call has its result. */
+  done: boolean;
+  failed: boolean;
+  /** Waiting for the user's approval. */
+  pending: boolean;
+}
+
+export type RunStep =
+  | ToolStep
+  | { kind: 'thinking'; key: string; index: number; text: string }
+  | { kind: 'note'; key: string; index: number; text: string };
+
+/** Consecutive steps with no text in view between them: one row in the transcript. */
+export interface Run {
+  kind: 'run';
+  key: string;
+  steps: RunStep[];
+  failed: number;
+  /** A call in here is waiting for the user. */
+  pending: boolean;
+  /** Pictures its tools made (generate_image), shown under the row. */
+  images: MadeImage[];
+}
+
+export type TurnBlock =
+  | Run
+  /** Text the model wrote on the way, in view. */
+  | { kind: 'note'; key: string; index: number; text: string }
+  /** Thinking in view ("Show Thinking: Always"). */
+  | { kind: 'thinking'; key: string; index: number; text: string }
+  /** An approval or a question that is not attached to a call in a run. */
+  | { kind: 'attention'; key: string; entry: DisplayedEntry }
+  /** Something to say before this message's blocks (the model changed). */
+  | { kind: 'notice'; key: string; index: number };
+
+export interface TurnStats {
+  /** When the turn's first assistant message was created (epoch seconds), for the live timer. */
+  startedAt: number;
+  failedToolCalls: number;
+}
+
+export type DisplayGroup =
+  | { kind: 'single'; entry: DisplayedEntry }
+  | {
+      kind: 'turn';
+      key: string;
+      blocks: TurnBlock[];
+      /** The answer: the text after the last call. Null while the turn is still working. */
+      final: DisplayedEntry | null;
+      /** The turn's first and last message, as positions in the conversation. */
+      firstIndex: number;
+      lastIndex: number;
+      stats: TurnStats;
+    };
 
 /** A user-role message that only carries tool results (or nothing yet): part of the agent's turn. */
 export function isToolResponseOnly(message: Message): boolean {
@@ -91,7 +146,7 @@ function shortToolName(name: string): string {
   return i === -1 ? name : name.substring(i + 2);
 }
 
-const ACTIVITY_ARG_KEYS = [
+const TARGET_ARG_KEYS = [
   'command',
   'path',
   'file_path',
@@ -106,7 +161,7 @@ const ACTIVITY_ARG_KEYS = [
 export function toolCallTarget(toolCall: unknown): string | null {
   const call = unwrapToolCall(toolCall);
   if (!call) return null;
-  for (const key of ACTIVITY_ARG_KEYS) {
+  for (const key of TARGET_ARG_KEYS) {
     const value = call.arguments[key];
     if (typeof value === 'string' && value.trim()) {
       const oneLine = value.replace(/\s+/g, ' ').trim();
@@ -122,21 +177,7 @@ export function toolCallName(toolCall: unknown): string | null {
   return call ? shortToolName(call.name) : null;
 }
 
-export function describeToolCall(toolCall: unknown): string | null {
-  const call = unwrapToolCall(toolCall);
-  if (!call) return null;
-  const tool = shortToolName(call.name);
-  for (const key of ACTIVITY_ARG_KEYS) {
-    const value = call.arguments[key];
-    if (typeof value === 'string' && value.trim()) {
-      const oneLine = value.replace(/\s+/g, ' ').trim();
-      return `${tool}: ${oneLine.length > 90 ? oneLine.slice(0, 90) + '…' : oneLine}`;
-    }
-  }
-  return tool;
-}
-
-const STEP_KEYWORDS: [StepKind | 'write' | 'agent', string[]][] = [
+const STEP_KEYWORDS: [StepKind, string[]][] = [
   ['agent', ['subagent', 'delegate', 'dynamic', 'task', 'recipe', 'agent']],
   [
     'write',
@@ -164,7 +205,7 @@ const STEP_KEYWORDS: [StepKind | 'write' | 'agent', string[]][] = [
 ];
 
 /** What one tool call is, from its name (and the text editor's sub-command). */
-export function classifyToolCall(toolCall: unknown): StepKind | 'write' | 'agent' {
+export function classifyToolCall(toolCall: unknown): StepKind {
   const call = unwrapToolCall(toolCall);
   if (!call) return 'tool';
   const name = shortToolName(call.name).toLowerCase();
@@ -210,95 +251,190 @@ export function isFailedResult(toolResult: unknown): boolean {
   return value?.isError === true;
 }
 
-function buildTurn(
-  entries: DisplayedEntry[],
-  rowContexts: readonly MessageRowContext[],
-  pendingConfirmationIds: ReadonlySet<string>,
-  listThinking: boolean
-): DisplayGroup[] {
-  // With thinking not listed ("Show Thinking: Never"), a turn is built as if it had none.
-  const thinkingOf = (message: Message) => (listThinking ? getThinkingContent(message) : null);
+const SHORT_NOTE_MAX_CHARS = 200;
+
+/**
+ * A note of a sentence or two, the kind a model writes on its way to a call ("Now the tests.").
+ * These fold into the run; anything with more to it (several sentences, a second paragraph, a
+ * list, code) is something to read and stays in view.
+ */
+export function isShortNote(text: string): boolean {
+  const note = text.trim();
+  if (note.length === 0 || note.length > SHORT_NOTE_MAX_CHARS) return false;
+  if (note.includes('```') || /\n\s*\n/.test(note)) return false;
+  if (/^\s*(?:[-*+]\s|\d+[.)]\s|#{1,6}\s|>|\|)/m.test(note)) return false;
+  const sentences = note.split(/(?<=[.!?。！？])\s+/).filter((part) => part.trim().length > 0);
+  return sentences.length <= 2;
+}
+
+// What stands in for a reply that ran out of output tokens is a notice, not something the model
+// wrote: it is neither a note nor thinking.
+function isOutputLimitFallback(message: Message): boolean {
+  return (
+    message.metadata.outputTokenLimitReached === true && message.metadata.fallbackContent === true
+  );
+}
+
+interface TurnOptions {
+  rowContexts: readonly MessageRowContext[];
+  thinking: ThinkingMode;
+  noticeBefore: ReadonlySet<number>;
+}
+
+function buildTurn(entries: DisplayedEntry[], options: TurnOptions): DisplayGroup[] {
+  const { rowContexts, thinking: thinkingMode, noticeBefore } = options;
   const last = entries[entries.length - 1];
   const final = isAnswerMessage(last.message) ? last : null;
   const work = final ? entries.slice(0, -1) : entries;
-  const finalThinking = final ? thinkingOf(final.message) : null;
 
-  // Text between steps only counts as work when there are steps: a run of plain replies with no
-  // tool calls and no thinking renders as it always did.
-  const workHasActivity = work.some(
-    ({ message }) => getToolRequests(message).length > 0 || thinkingOf(message) !== null
-  );
+  // A short note folds only when a call follows it somewhere in the turn.
+  let lastCallIndex = -1;
+  for (const { message, index } of work) {
+    if (getToolRequests(message).length > 0) lastCallIndex = index;
+  }
 
-  // A plain reply with nothing behind it: render it as it always was.
-  if (!workHasActivity && !finalThinking) {
+  const blocks: TurnBlock[] = [];
+  let run: Run | null = null;
+  // Text before the turn's first call is the model answering the user: always in view.
+  let seenCall = false;
+
+  // A run is known by its first step, which stays the same while steps are added behind it.
+  const openRun = (firstStepKey: string): Run => {
+    if (!run) {
+      run = {
+        kind: 'run',
+        key: `run-${firstStepKey}`,
+        steps: [],
+        failed: 0,
+        pending: false,
+        images: [],
+      };
+    }
+    return run;
+  };
+  const closeRun = () => {
+    if (!run) return;
+    // Notes fold in with the calls they lead to. A run that got no call after all (what came
+    // next was text long enough to stay in view) leaves its notes where they were: in view.
+    if (run.steps.every((step) => step.kind === 'note')) {
+      for (const step of run.steps) {
+        blocks.push({ kind: 'note', key: step.key, index: step.index, text: step.text });
+      }
+    } else {
+      blocks.push(run);
+    }
+    run = null;
+  };
+  const addThinking = (key: string, index: number, text: string) => {
+    if (thinkingMode === 'fold') {
+      const stepKey = `thinking-${key}`;
+      openRun(stepKey).steps.push({ kind: 'thinking', key: stepKey, index, text });
+    } else if (thinkingMode === 'show') {
+      closeRun();
+      blocks.push({ kind: 'thinking', key: `thinking-${key}`, index, text });
+    }
+  };
+
+  for (const entry of work) {
+    const { message, index } = entry;
+    // The tool-result messages of the turn: their results are on the calls already.
+    if (message.role !== 'assistant') continue;
+    const key = message.id ?? `msg-${index}`;
+    const fallback = isOutputLimitFallback(message);
+
+    if (noticeBefore.has(index)) {
+      closeRun();
+      blocks.push({ kind: 'notice', key: `notice-${key}`, index });
+    }
+
+    const thinking = fallback ? null : getThinkingContent(message);
+    if (thinking !== null) addThinking(key, index, thinking);
+
+    const requests = getToolRequests(message);
+    const states = rowContexts[index]?.toolStates ?? [];
+    const text = fallback ? '' : getTextAndImageContent(message).textContent;
+    if (text.trim()) {
+      const callFollows = requests.length > 0 || index < lastCallIndex;
+      // What the model wrote with a call that waits for approval is what the user reads to
+      // decide: it stays in view until the call has run.
+      const waiting = states.some((state) => state.isPending);
+      if (seenCall && callFollows && !waiting && isShortNote(text)) {
+        const stepKey = `note-${key}`;
+        openRun(stepKey).steps.push({ kind: 'note', key: stepKey, index, text });
+      } else {
+        closeRun();
+        blocks.push({ kind: 'note', key: `note-${key}`, index, text });
+      }
+    }
+
+    requests.forEach((request, toolIndex) => {
+      seenCall = true;
+      const state = states[toolIndex];
+      const tool = classifyToolCall(request.toolCall);
+      const target = toolCallTarget(request.toolCall);
+      const failed = Boolean(state?.response && isFailedResult(state.response.toolResult));
+      const pending = state?.isPending === true;
+      const current = openRun(request.id);
+      current.steps.push({
+        kind: 'tool',
+        key: request.id,
+        index,
+        toolIndex,
+        request,
+        tool,
+        name: toolCallName(request.toolCall),
+        target,
+        done: state?.response !== undefined,
+        failed,
+        pending,
+      });
+      if (failed) current.failed++;
+      if (pending) current.pending = true;
+      if (tool === 'image' && state?.response) {
+        for (const image of toolResultImages(state.response.toolResult)) {
+          current.images.push({ ...image, alt: target ?? '' });
+        }
+      }
+    });
+
+    // An approval or a question that stands on its own (not drawn on a call's card).
+    const standaloneConfirmation =
+      getToolConfirmationContent(message) !== undefined &&
+      !rowContexts[index]?.toolConfirmationShownInline;
+    if (standaloneConfirmation || getElicitationContent(message)) {
+      closeRun();
+      blocks.push({ kind: 'attention', key: `attention-${key}`, entry });
+    }
+  }
+
+  // The answer's own thinking comes after the last call, so it ends the last run.
+  if (final && !isOutputLimitFallback(final.message)) {
+    const thinking = getThinkingContent(final.message);
+    if (thinking !== null) {
+      addThinking(final.message.id ?? `msg-${final.index}`, final.index, thinking);
+    }
+  }
+  closeRun();
+
+  // Nothing but text: plain replies, drawn as they always were.
+  if (blocks.every((block) => block.kind === 'note')) {
     return entries.map((entry) => ({ kind: 'single', entry }));
   }
 
-  let toolCalls = 0;
-  let failedToolCalls = 0;
-  let hasThinking = finalThinking !== null;
-  let needsAttention = false;
-  let activity: string | null = null;
-  const images: MadeImage[] = [];
-
-  for (const { message, index } of work) {
-    const requests = getToolRequests(message);
-    const states = rowContexts[index]?.toolStates ?? [];
-    requests.forEach((request, i) => {
-      toolCalls++;
-      const state = states[i];
-      if (state?.response && isFailedResult(state.response.toolResult)) failedToolCalls++;
-      if (state?.response && classifyToolCall(request.toolCall) === 'image') {
-        const alt = toolCallTarget(request.toolCall) ?? '';
-        for (const image of toolResultImages(state.response.toolResult)) {
-          images.push({ ...image, alt });
-        }
-      }
-      if (state?.isPending) needsAttention = true;
-      activity = describeToolCall(request.toolCall) ?? activity;
-    });
-    if (thinkingOf(message) !== null) hasThinking = true;
-
-    const confirmation = getAnyToolConfirmationData(message);
-    if (confirmation && pendingConfirmationIds.has(confirmation.id)) needsAttention = true;
-
-    const elicitation = getElicitationContent(message);
-    const elicitationData = elicitation?.data as
-      { isSubmitted?: boolean; isCancelled?: boolean } | undefined;
-    if (elicitation && !elicitationData?.isSubmitted && !elicitationData?.isCancelled) {
-      needsAttention = true;
-    }
-  }
-
-  const lastWork = work[work.length - 1];
-  if (lastWork && !final) {
-    const pendingRequests = getToolRequests(lastWork.message);
-    if (pendingRequests.length > 0) {
-      activity = describeToolCall(pendingRequests[pendingRequests.length - 1].toolCall) ?? activity;
-    } else if (thinkingOf(lastWork.message) !== null) {
-      activity = 'Thinking';
-    }
-  }
-
+  const runs = blocks.filter((block): block is Run => block.kind === 'run');
   const firstAssistant = entries.find(({ message }) => message.role === 'assistant') ?? entries[0];
-  const durationS = Math.max(0, Math.round(last.message.created - firstAssistant.message.created));
 
   return [
     {
       kind: 'turn',
       key: `turn-${entries[0].message.id ?? entries[0].index}`,
-      work,
+      blocks,
       final,
-      finalThinking,
-      images,
+      firstIndex: entries[0].index,
+      lastIndex: last.index,
       stats: {
-        durationS,
         startedAt: firstAssistant.message.created,
-        toolCalls,
-        failedToolCalls,
-        hasThinking,
-        needsAttention,
-        activity,
+        failedToolCalls: runs.reduce((sum, item) => sum + item.failed, 0),
       },
     },
   ];
@@ -310,26 +446,25 @@ export function groupIntoTurns(
     isUserMessage: (message: Message) => boolean;
     isNotification: (message: Message) => boolean;
     rowContexts: readonly MessageRowContext[];
-    pendingConfirmationIds: ReadonlySet<string>;
-    /** False when the "Show Thinking" setting is "Never": thinking then makes no steps. Default true. */
-    listThinking?: boolean;
+    /** Where thinking goes. Default: folded into the rows. */
+    thinking?: ThinkingMode;
+    /** Messages that get a notice block before their own (a model change). */
+    noticeBefore?: ReadonlySet<number>;
     /** Displayed positions where a turn must not continue across (e.g. the "hidden messages" marker). */
     breakBefore?: ReadonlySet<number>;
   }
 ): DisplayGroup[] {
   const groups: DisplayGroup[] = [];
   let current: DisplayedEntry[] = [];
+  const turnOptions: TurnOptions = {
+    rowContexts: options.rowContexts,
+    thinking: options.thinking ?? 'fold',
+    noticeBefore: options.noticeBefore ?? new Set(),
+  };
 
   const flush = () => {
     if (current.length > 0) {
-      groups.push(
-        ...buildTurn(
-          current,
-          options.rowContexts,
-          options.pendingConfirmationIds,
-          options.listThinking ?? true
-        )
-      );
+      groups.push(...buildTurn(current, turnOptions));
       current = [];
     }
   };

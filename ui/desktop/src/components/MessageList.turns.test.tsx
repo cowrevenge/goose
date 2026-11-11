@@ -4,7 +4,7 @@ import { IntlTestWrapper } from '../i18n/test-utils';
 import type { Message, MessageContent } from '../types/message';
 import MessageList from './MessageList';
 
-// The whole turn with the real components (nothing mocked): this is what breaks first when
+// A whole turn with the real components (nothing mocked): this is what breaks first when
 // upstream changes a message component under the turn layout.
 
 const meta: Message['metadata'] = { agentVisible: true, userVisible: true };
@@ -15,40 +15,50 @@ const thinking = (text: string): MessageContent => ({
   thinking: text,
   signature: '',
 });
+const call = (id: string, name: string, args: Record<string, unknown>): MessageContent => ({
+  type: 'toolRequest',
+  id,
+  toolCall: { status: 'success', value: { name, arguments: args } },
+});
+const result = (id: string, output: string): MessageContent => ({
+  type: 'toolResponse',
+  id,
+  toolResult: {
+    status: 'success',
+    value: { content: [{ type: 'text', text: output }], isError: false },
+  },
+});
+
+const explanation =
+  'The build fails on a missing import. That is the only error, the rest are warnings. I will add the import and build again.';
 
 const transcript: Message[] = [
   msg('u1', 'user', 1, [{ type: 'text', text: 'Is the build green?' }]),
   msg('a1', 'assistant', 10, [
     thinking('I should run the build first.'),
     { type: 'text', text: 'Let me run the build.' },
-    {
-      type: 'toolRequest',
-      id: 't1',
-      toolCall: {
-        status: 'success',
-        value: { name: 'developer__shell', arguments: { command: 'cargo build' } },
-      },
-    },
+    call('t1', 'developer__shell', { command: 'cargo build' }),
   ]),
-  msg('r1', 'user', 30, [
-    {
-      type: 'toolResponse',
-      id: 't1',
-      toolResult: {
-        status: 'success',
-        value: { content: [{ type: 'text', text: 'Finished dev profile' }], isError: false },
-      },
-    },
+  msg('r1', 'user', 30, [result('t1', 'error: cannot find type Foo')]),
+  msg('a2', 'assistant', 32, [
+    { type: 'text', text: explanation },
+    call('t2', 'developer__edit', { path: 'src/main.rs' }),
   ]),
-  msg('a2', 'assistant', 45, [
+  msg('r2', 'user', 34, [result('t2', 'edited')]),
+  msg('a3', 'assistant', 35, [
+    { type: 'text', text: 'Building again.' },
+    call('t3', 'developer__shell', { command: 'cargo build --release' }),
+  ]),
+  msg('r3', 'user', 44, [result('t3', 'Finished release profile')]),
+  msg('a4', 'assistant', 45, [
     thinking('It compiled, so the answer is yes.'),
-    { type: 'text', text: 'Yes, the build is green.' },
+    { type: 'text', text: 'Yes, the build is green now.' },
   ]),
 ];
 
 describe('MessageList turn, drawn for real', () => {
-  it('folds the work into one line and opens it one step at a time', async () => {
-    const { container } = render(
+  it('lays the turn out as text, one row per run of calls, and the answer', async () => {
+    render(
       <MessageList
         messages={transcript}
         sessionId="session"
@@ -58,30 +68,45 @@ describe('MessageList turn, drawn for real', () => {
     );
     await act(async () => {});
 
-    // Folded: the summary line and the answer.
-    const summary = screen.getByRole('button', { name: /Worked for 35s · 1 tool call/ });
-    const work = container.querySelector('.turn-work [data-slot="collapsible-content"]')!;
-    expect(work.getAttribute('data-state')).toBe('closed');
-    expect(screen.getByText('Yes, the build is green.').closest('.turn-work')).toBeNull();
+    const turn = screen.getByTestId('turn');
+    const rows = within(turn)
+      .getAllByTestId('turn-run')
+      .map((run) => within(run).getAllByRole('button')[0]);
 
-    // Opened: one line per step, both thinking blocks as the same kind of row, nothing expanded.
-    fireEvent.click(summary);
-    expect(work.getAttribute('data-state')).toBe('open');
-    const steps = within(work as HTMLElement);
-    expect(steps.getAllByRole('button', { name: 'Thinking' })).toHaveLength(2);
-    expect(steps.getByText('Let me run the build.')).toBeInTheDocument();
-    expect(steps.getByText('Ran a command')).toBeInTheDocument();
-    expect(steps.getByText('cargo build')).toBeInTheDocument();
-    expect(steps.queryByText('I should run the build first.')).toBeNull();
+    // Top to bottom: the thinking before the first text, that text, the first call, the longer
+    // text in view, then one row for the edit and the build (the short note folds in with them).
+    expect(rows.map((row) => row.textContent)).toEqual([
+      'Thought',
+      'Ran a commandcargo build',
+      'Edited a file, ran a command',
+    ]);
+    expect(within(turn).getByText('Let me run the build.')).toBeInTheDocument();
+    expect(within(turn).getByText(explanation)).toBeInTheDocument();
+    expect(within(turn).queryByText('Building again.')).toBeNull();
+    expect(turn.textContent).toMatch(
+      /Thought.*Let me run the build\..*Ran a command.*missing import.*Edited a file, ran a command/s
+    );
+
+    // The answer is in full, outside the turn's rows, and its thinking is not drawn over it.
+    const answer = screen.getByText('Yes, the build is green now.');
+    expect(answer.closest('[data-testid="turn"]')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Thinking' })).toBeNull();
+
+    // A row opens to its steps, one line each, in order; the answer's thinking ends the last run.
+    fireEvent.click(rows[2]);
+    const steps = within(turn.querySelectorAll('.turn-run-steps')[0] as HTMLElement);
+    expect(steps.getByText('Edited a file')).toBeInTheDocument();
+    expect(steps.getByText('Building again.')).toBeInTheDocument();
+    expect(steps.getByText('cargo build --release')).toBeInTheDocument();
+    expect(steps.getByRole('button', { name: 'Thinking' })).toBeInTheDocument();
     expect(steps.queryByText('It compiled, so the answer is yes.')).toBeNull();
 
-    // A step opens on its own: the thinking text, then the tool's card.
-    fireEvent.click(steps.getAllByRole('button', { name: 'Thinking' })[1]);
+    // A step opens on its own: the thinking text, then the call's card.
+    fireEvent.click(steps.getByRole('button', { name: 'Thinking' }));
     expect(steps.getByText('It compiled, so the answer is yes.')).toBeInTheDocument();
-    expect(steps.queryByText('I should run the build first.')).toBeNull();
 
     fireEvent.click(steps.getByText('Ran a command'));
     await act(async () => {});
-    expect(steps.getByText(/Shell command: cargo build/)).toBeInTheDocument();
+    expect(steps.getByText(/Shell command: cargo build --release/)).toBeInTheDocument();
   });
 });

@@ -3,10 +3,8 @@ import { isEqual } from 'lodash';
 import { defineMessages, useIntl } from '../i18n';
 import GooseMessage from './GooseMessage';
 import UserMessage from './UserMessage';
-import CompactMessage from './CompactMessage';
-import { ThinkingStepRow } from './CompactStepRow';
 import { AlertTriangle } from 'lucide-react';
-import TurnWorkSection from './TurnWorkSection';
+import Turn from './Turn';
 import { useShowThinking } from '../hooks/useShowThinking';
 import {
   SystemNotificationInline,
@@ -17,13 +15,17 @@ import {
   getCreditsExhaustedNotification,
 } from './context_management/CreditsExhaustedNotification';
 import {
-  getPendingToolConfirmationIds,
   type ImageData,
   type Message,
   type NotificationEvent,
   type SystemNotificationContent,
 } from '../types/message';
-import { groupIntoTurns, isFailedResult, type DisplayedEntry } from '../utils/turnGrouping';
+import {
+  groupIntoTurns,
+  isFailedResult,
+  type DisplayedEntry,
+  type ThinkingMode,
+} from '../utils/turnGrouping';
 import { getModelDisplayName } from './settings/models/predefinedModelsUtils';
 import {
   deriveMessageRowContexts,
@@ -84,11 +86,8 @@ interface MessageRowProps {
   index: number;
   isStreaming: boolean;
   isUser: boolean;
-  hideThinking?: boolean;
-  /** Inside a turn's work section: one line per step. */
-  compact?: boolean;
-  /** With compact: only the tool calls that failed. */
-  onlyFailed?: boolean;
+  /** The answer of a turn: its thinking is with the turn's work, which sits right above it. */
+  afterWork?: boolean;
   message: Message;
   modelChangeMessage: string | null;
   onMessageUpdate?: (
@@ -111,9 +110,7 @@ function MessageRowComponent({
   index,
   isStreaming,
   isUser,
-  hideThinking,
-  compact = false,
-  onlyFailed = false,
+  afterWork = false,
   message,
   modelChangeMessage,
   onMessageUpdate,
@@ -148,25 +145,13 @@ function MessageRowComponent({
         />
       )}
       <div
-        className={`relative ${index === 0 || compact ? 'mt-0' : 'mt-4'} ${isUser ? 'user' : 'assistant'} ${rowContext.isInToolCallChain ? 'in-chain' : ''}`}
+        className={`relative ${index === 0 ? 'mt-0' : afterWork ? 'mt-2' : 'mt-4'} ${isUser ? 'user' : 'assistant'} ${rowContext.isInToolCallChain ? 'in-chain' : ''}`}
         data-testid="message-container"
       >
         {isUser ? (
           !hasOnlyToolResponses && (
             <UserMessage message={message} onMessageUpdate={onMessageUpdate} />
           )
-        ) : compact ? (
-          <CompactMessage
-            sessionId={sessionId}
-            message={message}
-            toolStates={rowContext.toolStates}
-            toolNotifications={toolNotifications}
-            toolConfirmationShownInline={rowContext.toolConfirmationShownInline}
-            append={append}
-            isStreaming={isStreaming}
-            onlyFailed={onlyFailed}
-            submitElicitationResponse={submitElicitationResponse}
-          />
         ) : (
           <GooseMessage
             sessionId={sessionId}
@@ -177,7 +162,7 @@ function MessageRowComponent({
             toolConfirmationShownInline={rowContext.toolConfirmationShownInline}
             append={append}
             isStreaming={isStreaming}
-            hideThinking={hideThinking}
+            hideThinking={afterWork}
             submitElicitationResponse={submitElicitationResponse}
           />
         )}
@@ -195,6 +180,8 @@ interface MessageListProps {
   append?: (value: string) => void;
   isUserMessage: (message: Message) => boolean;
   isStreamingMessage?: boolean;
+  /** The turn has stopped to ask the user something (an approval, a question). */
+  isWaitingForUser?: boolean;
   onMessageUpdate?: (
     messageId: string,
     newContent: string,
@@ -215,6 +202,7 @@ export default function MessageList({
   append = emptyAppend,
   isUserMessage,
   isStreamingMessage = false,
+  isWaitingForUser = false,
   onMessageUpdate,
   onRenderingComplete,
   submitElicitationResponse,
@@ -223,9 +211,11 @@ export default function MessageList({
   const [showAllMessages, setShowAllMessages] = useState(false);
   // Every failed tool call in the session, in place, so they can be tracked down one by one.
   const [errorsOnly, setErrorsOnly] = useState(false);
-  // "Never" keeps thinking out of the turns altogether; until the setting is read, group as if
-  // it is listed (the default), and the thinking steps themselves wait for it.
-  const listThinking = useShowThinking() !== 'never';
+  // Where a turn's thinking goes follows the "Show Thinking" setting: folded into the rows
+  // ("Collapsed", and until the setting has been read), in view ("Always"), or left out ("Never").
+  const showThinking = useShowThinking();
+  const thinking: ThinkingMode =
+    showThinking === 'never' ? 'hide' : showThinking === 'always' ? 'show' : 'fold';
   const visibleMessages = useMemo(
     () =>
       messages.flatMap((message, index) =>
@@ -273,7 +263,6 @@ export default function MessageList({
   }, [hasHiddenMessages]);
 
   const rowContexts = useMemo(() => deriveMessageRowContexts(messages), [messages]);
-  const pendingConfirmationIds = useMemo(() => getPendingToolConfirmationIds(messages), [messages]);
   const modelLabel = (model: InferenceModel) =>
     model.confirmed
       ? getModelDisplayName(model.id)
@@ -293,9 +282,33 @@ export default function MessageList({
   );
   const showingErrors = errorsOnly && failedCallCount > 0;
 
-  // One agent turn spans many messages (assistant turns and tool-result messages); group them so
-  // the work folds into one line and only the final answer stays in view. The errors view looks
-  // at the whole session, not only the messages the long-chat limit shows.
+  // The model changed between the reply before this message and this one.
+  const modelChangeFor = (index: number): string | null => {
+    const currentModel = inferenceModel(messages[index]);
+    const previousModel = rowContexts[index].previousModel;
+    return currentModel && previousModel && isModelChange(previousModel, currentModel)
+      ? intl.formatMessage(i18n.modelChanged, {
+          previousModel: modelLabel(previousModel),
+          currentModel: modelLabel(currentModel),
+        })
+      : null;
+  };
+  const modelChangeIndexes = useMemo(() => {
+    const indexes = new Set<number>();
+    messages.forEach((message, index) => {
+      const currentModel = inferenceModel(message);
+      const previousModel = rowContexts[index].previousModel;
+      if (currentModel && previousModel && isModelChange(previousModel, currentModel)) {
+        indexes.add(index);
+      }
+    });
+    return indexes;
+  }, [messages, rowContexts]);
+
+  // One agent turn spans many messages (assistant messages and tool-result messages). They are
+  // laid out as a turn: text in view, each run of tool calls as one row, the answer in full (see
+  // utils/turnGrouping.ts). The errors view looks at the whole session, not only the messages the
+  // long-chat limit shows.
   const groupedMessages = showingErrors ? visibleMessages : displayedMessages;
   const groups = useMemo(
     () =>
@@ -303,8 +316,8 @@ export default function MessageList({
         isUserMessage,
         isNotification: (message) => getSystemNotification(message) !== undefined,
         rowContexts,
-        pendingConfirmationIds,
-        listThinking,
+        thinking,
+        noticeBefore: modelChangeIndexes,
         breakBefore:
           !showingErrors && hiddenMessageCount > 0 ? new Set([HEAD_MESSAGE_COUNT]) : undefined,
       }),
@@ -312,33 +325,22 @@ export default function MessageList({
       groupedMessages,
       isUserMessage,
       rowContexts,
-      pendingConfirmationIds,
-      listThinking,
+      thinking,
+      modelChangeIndexes,
       hiddenMessageCount,
       showingErrors,
     ]
   );
   const lastMessageIndex = messages.length - 1;
 
-  const renderRow = (
-    { message, index }: DisplayedEntry,
-    { hideThinking = false, compact = false, onlyFailed = false } = {}
-  ) => {
+  const renderRow = ({ message, index }: DisplayedEntry, { afterWork = false } = {}) => {
     const isUser = isUserMessage(message);
     const messageIdentifier = message.id ?? `msg-${index}-${message.created}`;
     const messageKey = getSystemNotification(message)
       ? `notification-${messageIdentifier}`
       : messageIdentifier;
     const rowContext = rowContexts[index];
-    const currentModel = inferenceModel(message);
-    const previousModel = rowContext.previousModel;
-    const modelChangeMessage =
-      currentModel && previousModel && isModelChange(previousModel, currentModel)
-        ? intl.formatMessage(i18n.modelChanged, {
-            previousModel: modelLabel(previousModel),
-            currentModel: modelLabel(currentModel),
-          })
-        : null;
+    const modelChangeMessage = modelChangeFor(index);
     const toolNotifications = rowContext.toolStates.map((toolState) =>
       toolCallNotifications.get(toolState.requestId)
     );
@@ -355,9 +357,7 @@ export default function MessageList({
           message.role === 'assistant'
         }
         isUser={isUser}
-        hideThinking={hideThinking}
-        compact={compact}
-        onlyFailed={onlyFailed}
+        afterWork={afterWork}
         message={message}
         modelChangeMessage={modelChangeMessage}
         onMessageUpdate={onMessageUpdate}
@@ -427,8 +427,7 @@ export default function MessageList({
       continue;
     }
 
-    const firstIndex =
-      group.kind === 'single' ? group.entry.index : (group.work[0] ?? group.final)!.index;
+    const firstIndex = group.kind === 'single' ? group.entry.index : group.firstIndex;
     if (!hiddenMarkerAdded && firstTailIndex !== undefined && firstIndex >= firstTailIndex) {
       addHiddenMarker();
     }
@@ -438,40 +437,33 @@ export default function MessageList({
       continue;
     }
 
-    const turnEntries = group.final ? [...group.work, group.final] : group.work;
-    const turnIsStreaming =
-      isStreamingMessage && turnEntries[turnEntries.length - 1].index === lastMessageIndex;
-
     messageRows.push(
-      <div key={group.key} className="relative mt-4 assistant">
-        <TurnWorkSection
-          stats={group.stats}
-          isStreaming={turnIsStreaming}
-          hasFinal={group.final !== null}
-          forceOpen={showingErrors}
-        >
-          {group.work.map((entry) =>
-            renderRow(entry, { compact: true, onlyFailed: showingErrors })
-          )}
-          {group.finalThinking && !showingErrors && (
-            <ThinkingStepRow content={group.finalThinking} />
-          )}
-        </TurnWorkSection>
-        {/* What the turn drew stays in view, outside the fold: it is what was asked for. */}
-        {!showingErrors &&
-          group.images.map((image, i) => (
-            <img
-              key={i}
-              data-testid="turn-image"
-              src={`data:${image.mimeType};base64,${image.data}`}
-              alt={image.alt}
-              className="my-2 max-h-[32rem] max-w-full rounded-md"
-            />
-          ))}
+      <div
+        key={group.key}
+        className={`relative ${group.firstIndex === 0 ? 'mt-0' : 'mt-4'} assistant`}
+        data-testid="turn"
+      >
+        <Turn
+          blocks={group.blocks}
+          startedAt={group.stats.startedAt}
+          working={
+            isStreamingMessage &&
+            !isWaitingForUser &&
+            group.final === null &&
+            group.lastIndex === lastMessageIndex
+          }
+          errorsOnly={showingErrors}
+          rowContexts={rowContexts}
+          toolCallNotifications={toolCallNotifications}
+          sessionId={sessionId}
+          append={append}
+          noticeFor={modelChangeFor}
+          submitElicitationResponse={submitElicitationResponse}
+        />
       </div>
     );
     if (group.final && !showingErrors) {
-      messageRows.push(renderRow(group.final, { hideThinking: true }));
+      messageRows.push(renderRow(group.final, { afterWork: true }));
     }
   }
 

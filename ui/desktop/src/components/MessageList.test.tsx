@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import type { IpcRendererEvent } from 'electron';
 import type { ImageData, InferenceMetadata, Message, MessageContent } from '../types/message';
 import { AppEvents } from '../constants/events';
@@ -29,16 +29,19 @@ vi.mock('./GooseMessage', () => ({
   },
 }));
 
-// What a turn's work section lists instead of the full message.
-vi.mock('./CompactMessage', () => ({
-  default: ({ message, onlyFailed }: { message: Message; onlyFailed?: boolean }) => {
-    const id = message.id ?? 'missing-id';
-    renderCounts.set(id, (renderCounts.get(id) ?? 0) + 1);
-    return (
-      <div data-compact="true" data-only-failed={onlyFailed ? 'true' : undefined}>
-        {id}
-      </div>
-    );
+// Inside a turn the messages are drawn as text and as rows of tool calls, not as whole
+// messages. These two are what those draw with: the text of a note, and an opened call's card.
+vi.mock('./MarkdownContent', () => ({
+  default: ({ content }: { content: string }) => {
+    renderCounts.set(content, (renderCounts.get(content) ?? 0) + 1);
+    return <div>{content}</div>;
+  },
+}));
+
+vi.mock('./ToolCallWithResponse', () => ({
+  default: ({ toolRequest }: { toolRequest: { id: string } }) => {
+    renderCounts.set(toolRequest.id, (renderCounts.get(toolRequest.id) ?? 0) + 1);
+    return <div>card {toolRequest.id}</div>;
   },
 }));
 
@@ -176,6 +179,10 @@ describe('MessageList render isolation', () => {
       message('tool-response', 'user', []),
     ];
     const { rerender } = renderList(messages);
+    // The request is a row of the turn; open the row and the call so its card is drawn.
+    act(() => screen.getByRole('button', { name: /Used test_tool/ }).click());
+    act(() => within(screen.getByTestId('turn-run')).getAllByRole('button')[1].click());
+    expect(renderCounts.get('tool-1')).toBe(1);
     const updatedMessages = cloneMessages(messages);
     updatedMessages[2].content = [toolResponse('tool-1')];
 
@@ -188,8 +195,8 @@ describe('MessageList render isolation', () => {
       />
     );
 
-    expect(renderCounts.get('tool-request')).toBe(2);
-    expect(renderCounts.get('unrelated')).toBe(1);
+    expect(renderCounts.get('tool-1')).toBe(2);
+    expect(renderCounts.get('Unrelated')).toBe(1);
   });
 
   it('preserves the message update callback', () => {
@@ -375,50 +382,140 @@ describe('MessageList transcript window', () => {
   });
 });
 
-describe('MessageList turn grouping', () => {
-  it('collapses the work of a turn behind a summary and keeps the answer in view', () => {
+describe('MessageList turn layout', () => {
+  const runRows = () => screen.queryAllByTestId('turn-run');
+  const rowButton = (run: HTMLElement) => within(run).getAllByRole('button')[0];
+
+  it('folds the calls of a turn into a row and keeps the answer in view', () => {
     const transcript: Message[] = [
       message('u1', 'user', [{ type: 'text', text: 'Check the DB' }]),
       { ...message('a1', 'assistant', [toolRequest('t1')]), created: 10 },
       message('r1', 'user', [toolResponse('t1')]),
-      { ...message('a2', 'assistant', [{ type: 'text', text: 'Found it.' }]), created: 45 },
+      { ...message('a2', 'assistant', [toolRequest('t2'), toolRequest('t3')]), created: 20 },
+      message('r2', 'user', [toolResponse('t2'), toolResponse('t3')]),
+      { ...message('a3', 'assistant', [{ type: 'text', text: 'Found it.' }]), created: 45 },
     ];
 
-    const { container } = renderList(transcript);
+    renderList(transcript);
 
-    const trigger = screen.getByRole('button', { name: /Worked for 35s · 1 tool call/ });
-    const content = container.querySelector('.turn-work [data-slot="collapsible-content"]');
-    expect(content?.getAttribute('data-state')).toBe('closed');
-    expect(content?.textContent).toContain('a1');
-    expect(screen.getByText('a2').closest('.turn-work')).toBeNull();
+    // One row for the three calls; the messages behind them are not drawn as messages.
+    expect(runRows()).toHaveLength(1);
+    expect(rowButton(runRows()[0])).toHaveTextContent('Used 3 tools');
+    expect(rowButton(runRows()[0])).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByText('a1')).toBeNull();
+    expect(screen.queryByText('a2')).toBeNull();
+    // The answer is a message of its own, outside the turn's rows.
+    expect(screen.getByText('a3').closest('[data-testid="turn"]')).toBeNull();
 
-    act(() => trigger.click());
-    expect(content?.getAttribute('data-state')).toBe('open');
-    // Inside the work, every step is drawn one line at a time; the answer is drawn in full.
-    expect(screen.getByText('a1').getAttribute('data-compact')).toBe('true');
-    expect(screen.getByText('a2').getAttribute('data-compact')).toBeNull();
+    act(() => rowButton(runRows()[0]).click());
+    expect(rowButton(runRows()[0])).toHaveAttribute('aria-expanded', 'true');
+    expect(within(runRows()[0]).getAllByText('Used test_tool')).toHaveLength(3);
+    // Opened one layer at a time: no call's card yet.
+    expect(screen.queryByText(/^card /)).toBeNull();
   });
 
-  it("folds a reply's thinking behind a line, unless thinking is set to Never", async () => {
+  it('keeps longer text between calls in view and starts a new row after it', () => {
+    const explanation =
+      'The table is there but the index is missing. That is why the query is slow. I will add it and run the query again to compare.';
+    renderList([
+      message('u1', 'user', [{ type: 'text', text: 'Why is it slow?' }]),
+      message('a1', 'assistant', [toolRequest('t1')]),
+      message('r1', 'user', [toolResponse('t1')]),
+      message('a2', 'assistant', [{ type: 'text', text: explanation }, toolRequest('t2')]),
+      message('r2', 'user', [toolResponse('t2')]),
+      message('a3', 'assistant', [{ type: 'text', text: 'Fast now.' }]),
+    ]);
+
+    expect(runRows()).toHaveLength(2);
+    expect(screen.getByText(explanation)).toBeInTheDocument();
+    // In reading order: row, text, row.
+    const turn = screen.getByTestId('turn');
+    expect(turn.textContent).toMatch(/Used test_tool.*index is missing.*Used test_tool/s);
+  });
+
+  it("folds a reply's thinking into a row above it, unless thinking is set to Never", async () => {
     const thought: MessageContent = { type: 'thinking', thinking: 'hmm', signature: '' };
     renderList([
       message('u1', 'user', [{ type: 'text', text: 'hi' }]),
       { ...message('a1', 'assistant', [thought, { type: 'text', text: 'hello' }]), created: 10 },
     ]);
-    expect(screen.getByRole('button', { name: /Thought for/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Thought' })).toBeInTheDocument();
 
     await window.electron.setSetting('showThinking', 'never');
     act(() => {
       window.dispatchEvent(new CustomEvent(AppEvents.SHOW_THINKING_CHANGED));
     });
-    await waitFor(() => expect(screen.queryByRole('button', { name: /Thought for/ })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Thought' })).toBeNull());
     expect(screen.getByText('a1')).toBeInTheDocument();
+
+    // "Always" puts the thinking itself in view.
+    await window.electron.setSetting('showThinking', 'always');
+    act(() => {
+      window.dispatchEvent(new CustomEvent(AppEvents.SHOW_THINKING_CHANGED));
+    });
+    expect(await screen.findByText('hmm')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Thought' })).toBeNull();
 
     await window.electron.setSetting('showThinking', 'collapsed');
     act(() => {
       window.dispatchEvent(new CustomEvent(AppEvents.SHOW_THINKING_CHANGED));
     });
-    expect(await screen.findByRole('button', { name: /Thought for/ })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Thought' })).toBeInTheDocument();
+  });
+
+  it('says what the turn is doing in the row it is working in', () => {
+    render(
+      <MessageList
+        messages={[
+          message('u1', 'user', [{ type: 'text', text: 'go' }]),
+          { ...message('a1', 'assistant', [toolRequest('t1')]), created: Date.now() / 1000 - 5 },
+        ]}
+        sessionId="test-session"
+        append={append}
+        isUserMessage={isUserMessage}
+        isStreamingMessage
+      />,
+      { wrapper: IntlTestWrapper }
+    );
+    expect(rowButton(runRows()[0])).toHaveTextContent('Using test_tool…');
+  });
+
+  it('stops saying it is at work while it waits for the user to approve a call', () => {
+    const confirmation = {
+      type: 'toolConfirmationRequest',
+      id: 't2',
+      toolName: 'test_tool',
+      arguments: {},
+    } as MessageContent;
+    const waiting = (isWaitingForUser: boolean) => (
+      <MessageList
+        messages={[
+          message('u1', 'user', [{ type: 'text', text: 'go' }]),
+          message('a1', 'assistant', [toolRequest('t1')]),
+          message('r1', 'user', [toolResponse('t1')]),
+          { ...message('a2', 'assistant', [toolRequest('t2')]), created: Date.now() / 1000 - 5 },
+          message('c1', 'assistant', [confirmation]),
+        ]}
+        sessionId="test-session"
+        append={append}
+        isUserMessage={isUserMessage}
+        isStreamingMessage
+        isWaitingForUser={isWaitingForUser}
+      />
+    );
+    const { rerender } = render(waiting(true), { wrapper: IntlTestWrapper });
+
+    // What it did so far, and the call that asks as its card in view.
+    expect(rowButton(runRows()[0])).toHaveTextContent('Used test_tool');
+    expect(rowButton(runRows()[0])).toHaveTextContent('Waiting for you');
+    expect(rowButton(runRows()[0])).not.toHaveTextContent('…');
+    expect(screen.getByText('card t2')).toBeInTheDocument();
+
+    // Answered: the turn is at work again, in that call.
+    rerender(waiting(false));
+    expect(rowButton(runRows()[0])).toHaveTextContent('Using test_tool…');
+    expect(rowButton(runRows()[0])).not.toHaveTextContent('Waiting for you');
+    expect(screen.queryByText('card t2')).toBeNull();
   });
 
   it('has no errors switch when nothing failed', () => {
@@ -438,26 +535,32 @@ describe('MessageList turn grouping', () => {
       message('r1', 'user', [toolResponse('t1')]),
       message('a2', 'assistant', [{ type: 'text', text: 'clean answer' }]),
       message('u2', 'user', [{ type: 'text', text: 'second' }]),
-      message('b1', 'assistant', [toolRequest('t2'), toolRequest('t3')]),
-      message('s1', 'user', [toolResponse('t2', true), toolResponse('t3', true)]),
+      message('b1', 'assistant', [toolRequest('t2'), toolRequest('t3'), toolRequest('t4')]),
+      message('s1', 'user', [
+        toolResponse('t2', true),
+        toolResponse('t3'),
+        toolResponse('t4', true),
+      ]),
       message('b2', 'assistant', [{ type: 'text', text: 'failed answer' }]),
     ]);
 
     const toggle = screen.getByTestId('errors-only-toggle');
     expect(toggle.textContent).toContain('2 failed calls');
-    expect(screen.getByText('a1')).toBeTruthy();
+    expect(runRows()).toHaveLength(2);
+    expect(screen.getByText('a2')).toBeTruthy();
 
     act(() => toggle.click());
 
-    // Only the turn with failures is left, opened, drawn as its failed calls alone.
-    expect(screen.queryByText('a1')).toBeNull();
+    // Only the row with failures is left, opened, listing its failed calls alone.
+    expect(runRows()).toHaveLength(1);
     expect(screen.queryByText('u1')).toBeNull();
+    expect(screen.queryByText('a2')).toBeNull();
     expect(screen.queryByText('b2')).toBeNull();
-    expect(screen.getByText('b1').getAttribute('data-only-failed')).toBe('true');
-    const content = screen.getByText('b1').closest('[data-slot="collapsible-content"]');
-    expect(content?.getAttribute('data-state')).toBe('open');
+    expect(rowButton(runRows()[0])).toHaveAttribute('aria-expanded', 'true');
+    expect(within(runRows()[0]).getAllByText('Used test_tool')).toHaveLength(2);
 
     act(() => screen.getByTestId('errors-only-toggle').click());
-    expect(screen.getByText('a1')).toBeTruthy();
+    expect(runRows()).toHaveLength(2);
+    expect(screen.getByText('a2')).toBeTruthy();
   });
 });

@@ -552,6 +552,7 @@ export default function BaseChat({
                       append={isSubagentSession ? undefined : appendToChat}
                       isUserMessage={isUserMessage}
                       isStreamingMessage={chatState !== ChatState.Idle}
+                      isWaitingForUser={chatState === ChatState.WaitingForUserInput}
                       onRenderingComplete={handleRenderingComplete}
                       onMessageUpdate={isSubagentSession ? undefined : onMessageUpdate}
                       submitElicitationResponse={submitElicitationResponse}

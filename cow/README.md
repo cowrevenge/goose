@@ -4,12 +4,19 @@ Local changes on top of an upstream Goose release, built and installed on Window
 
 ## What's in here
 
-- **Turn layout** (`ui/desktop/src`): one agent turn renders as a collapsible work section
-  (thinking, tool calls, tool results, text written between tool calls) plus an always-visible
-  final answer, the way claude.ai shows a turn. Live status line while running, a one-line summary
-  when done (`Worked for 2m 14s · 6 tool calls · 1 failed`), opens by itself for a pending tool
-  approval or a turn that ended without an answer. Thinking steps follow the Show Thinking setting
-  (Settings > Chat): Collapsed lists each as a closed line, Always lists it open, Never leaves it out.
+- **Turn layout** (`ui/desktop/src`): an agent turn is laid out the way Claude's own transcript
+  is. What the model writes stays in view as plain text, with no box around it in either theme
+  (upstream's dark theme draws one). Each run of tool calls between two pieces of text is one row
+  that says what it did (`Ran 3 commands, edited a file ›`); a single call is named with its
+  target (`Read a file  src/main.rs ›`). A row opens to its steps one line each, and each step
+  opens to its card. A short note on the way to a call ("Now the tests.") folds into the row with
+  the call; text before the first call and anything longer stays in view. While the turn works,
+  its last row says what it is doing (`Running a command… cargo build · 1m 12s`). A call that asks
+  for approval is drawn as its card, in view, until it is answered. Generated pictures stay in
+  view under their row. The switch at the top, shown when a call failed, leaves only the failed
+  calls. Thinking follows the Show Thinking setting (Settings > Chat): Collapsed keeps it as a step
+  inside the rows, Always puts the text in view, Never leaves it out. The rules are in
+  `utils/turnGrouping.ts`, the rows in `components/Turn*.tsx`.
 - **`cow/cow-goose.ps1`**: build the desktop app from this checkout and install it over `C:\Goose`.
 
 ## Build and install (Windows)

@@ -251,36 +251,6 @@
   "chatSettings.responseStylesTitle": {
     "defaultMessage": "Response Styles"
   },
-  "compactStep.agent": {
-    "defaultMessage": "Ran a sub-agent"
-  },
-  "compactStep.command": {
-    "defaultMessage": "Ran a command"
-  },
-  "compactStep.fetch": {
-    "defaultMessage": "Fetched a page"
-  },
-  "compactStep.image": {
-    "defaultMessage": "Generated an image"
-  },
-  "compactStep.list": {
-    "defaultMessage": "Listed a folder"
-  },
-  "compactStep.read": {
-    "defaultMessage": "Read a file"
-  },
-  "compactStep.search": {
-    "defaultMessage": "Searched"
-  },
-  "compactStep.thinking": {
-    "defaultMessage": "Thinking"
-  },
-  "compactStep.tool": {
-    "defaultMessage": "Used {tool}"
-  },
-  "compactStep.write": {
-    "defaultMessage": "Edited a file"
-  },
   "configSettings.configReset": {
     "defaultMessage": "Configuration Reset"
   },
@@ -4880,26 +4850,101 @@
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "Goose would like to call {toolName}. Allow?"
   },
-  "turnWork.failed": {
+  "turnRun.did.agent": {
+    "defaultMessage": "{count,plural,one{ran a sub-agent} other{ran # sub-agents}}"
+  },
+  "turnRun.did.command": {
+    "defaultMessage": "{count,plural,one{ran a command} other{ran # commands}}"
+  },
+  "turnRun.did.fetch": {
+    "defaultMessage": "{count,plural,one{fetched a page} other{fetched # pages}}"
+  },
+  "turnRun.did.image": {
+    "defaultMessage": "{count,plural,one{generated an image} other{generated # images}}"
+  },
+  "turnRun.did.list": {
+    "defaultMessage": "{count,plural,one{listed a folder} other{listed # folders}}"
+  },
+  "turnRun.did.read": {
+    "defaultMessage": "{count,plural,one{read a file} other{read # files}}"
+  },
+  "turnRun.did.search": {
+    "defaultMessage": "{count,plural,one{searched once} other{searched # times}}"
+  },
+  "turnRun.did.tool": {
+    "defaultMessage": "{count,plural,one{used a tool} other{used # tools}}"
+  },
+  "turnRun.did.write": {
+    "defaultMessage": "{count,plural,one{edited a file} other{edited # files}}"
+  },
+  "turnRun.doing.agent": {
+    "defaultMessage": "Running a sub-agent"
+  },
+  "turnRun.doing.command": {
+    "defaultMessage": "Running a command"
+  },
+  "turnRun.doing.fetch": {
+    "defaultMessage": "Fetching a page"
+  },
+  "turnRun.doing.image": {
+    "defaultMessage": "Generating an image"
+  },
+  "turnRun.doing.list": {
+    "defaultMessage": "Listing a folder"
+  },
+  "turnRun.doing.read": {
+    "defaultMessage": "Reading a file"
+  },
+  "turnRun.doing.search": {
+    "defaultMessage": "Searching"
+  },
+  "turnRun.doing.thinking": {
+    "defaultMessage": "Thinking"
+  },
+  "turnRun.doing.tool": {
+    "defaultMessage": "Using {tool}"
+  },
+  "turnRun.doing.write": {
+    "defaultMessage": "Editing a file"
+  },
+  "turnRun.failed": {
     "defaultMessage": "{count} failed"
   },
-  "turnWork.needsAttention": {
+  "turnRun.thought": {
+    "defaultMessage": "Thought"
+  },
+  "turnRun.waiting": {
     "defaultMessage": "Waiting for you"
   },
-  "turnWork.noAnswer": {
-    "defaultMessage": "Ended without a final answer"
+  "turnStep.agent": {
+    "defaultMessage": "Ran a sub-agent"
   },
-  "turnWork.thought": {
-    "defaultMessage": "Thought for {duration}"
+  "turnStep.command": {
+    "defaultMessage": "Ran a command"
   },
-  "turnWork.toolCalls": {
-    "defaultMessage": "{count,plural,one{# tool call} other{# tool calls}}"
+  "turnStep.fetch": {
+    "defaultMessage": "Fetched a page"
   },
-  "turnWork.worked": {
-    "defaultMessage": "Worked for {duration}"
+  "turnStep.image": {
+    "defaultMessage": "Generated an image"
   },
-  "turnWork.working": {
-    "defaultMessage": "Working"
+  "turnStep.list": {
+    "defaultMessage": "Listed a folder"
+  },
+  "turnStep.read": {
+    "defaultMessage": "Read a file"
+  },
+  "turnStep.search": {
+    "defaultMessage": "Searched"
+  },
+  "turnStep.thinking": {
+    "defaultMessage": "Thinking"
+  },
+  "turnStep.tool": {
+    "defaultMessage": "Used {tool}"
+  },
+  "turnStep.write": {
+    "defaultMessage": "Edited a file"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "Goose will download the update in the background and install it the next time you quit or restart."
