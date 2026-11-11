@@ -42,6 +42,7 @@ import { formatAppName, errorMessage, formatErrorForLogging } from './utils/conv
 import { isRetiredGooseChatApp } from './utils/retiredApps';
 import type { Settings, SettingKey } from './utils/settings';
 import { defaultSettings, getKeyboardShortcuts } from './utils/settings';
+import { shouldHideOnClose } from './utils/closeToTray';
 import * as crypto from 'crypto';
 import windowStateKeeper from 'electron-window-state';
 import {
@@ -950,6 +951,9 @@ let appConfig = {
 };
 
 const windowMap = new Map<number, BrowserWindow>();
+// Set when a real quit starts (tray Quit, update install, OS shutdown or logoff), so close-to-tray
+// lets windows close instead of hiding them.
+let isQuitting = false;
 const appWindows = new Map<string, BrowserWindow>();
 const desktopFileAccess = new DesktopFileAccess();
 
@@ -1443,6 +1447,30 @@ const createChat = async (
   }
   windowMap.set(windowId, mainWindow);
 
+  // Close to tray: X on the last visible window hides it, so a run in progress keeps going and the
+  // tray brings it back as it was. A real quit (tray Quit, update, shutdown) still closes it.
+  mainWindow.on('close', (event) => {
+    const otherVisibleWindows = BrowserWindow.getAllWindows().filter(
+      (w) => w.id !== windowId && !w.isDestroyed() && w.isVisible()
+    ).length;
+    if (
+      shouldHideOnClose({
+        enabled: getSettings().closeToTray,
+        isQuitting,
+        hasTray: tray !== null,
+        platform: process.platform,
+        otherVisibleWindows,
+      })
+    ) {
+      event.preventDefault();
+      mainWindow.hide();
+    }
+  });
+  // Windows logoff or shutdown: let the window close so it doesn't block the session ending.
+  mainWindow.on('session-end', () => {
+    isQuitting = true;
+  });
+
   // Handle window closure
   mainWindow.on('closed', () => {
     windowMap.delete(windowId);
@@ -1923,6 +1951,7 @@ ipcMain.handle('get-setting', (_event, key: SettingKey) => {
 // Valid setting keys for runtime validation
 const validSettingKeys: Set<string> = new Set([
   'showMenuBarIcon',
+  'closeToTray',
   'showDockIcon',
   'enableWakelock',
   'enableNotifications',
@@ -1938,6 +1967,7 @@ const validSettingKeys: Set<string> = new Set([
   'seenAnnouncementIds',
   'disableAutoDownload',
   'recentModels',
+  'showThinking',
 ]);
 
 ipcMain.handle('set-setting', (_event, key: SettingKey, value: unknown) => {
@@ -3114,6 +3144,13 @@ app.on('will-quit', async () => {
   windowPowerSaveBlockers.clear();
 
   globalShortcut.unregisterAll();
+});
+
+app.on('before-quit', () => {
+  isQuitting = true;
+});
+powerMonitor.on('shutdown', () => {
+  isQuitting = true;
 });
 
 app.on('window-all-closed', () => {

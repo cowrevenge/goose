@@ -141,8 +141,8 @@ pub(super) struct ApiCall {
 }
 
 impl ApiCall {
-    pub(super) fn input_tokens(&self) -> i32 {
-        serialized_chars(&self.body)
+    pub(super) fn input_tokens(&self) -> i64 {
+        i64::from(serialized_chars(&self.body))
     }
 
     pub(super) fn session_id(&self) -> Option<&str> {
@@ -313,6 +313,20 @@ impl<'a> ApiRuleBuilder<'a> {
         let gate = ResponseGate::new();
         self.api
             .add_gated_rule(self.matcher, ApiResponse::Reply(text.into()), gate.clone());
+        gate
+    }
+
+    pub(super) fn hold_call(self, name: impl Into<String>, arguments: Value) -> ResponseGate {
+        let gate = ResponseGate::new();
+        self.api.add_gated_rule(
+            self.matcher,
+            ApiResponse::ToolCall {
+                name: name.into(),
+                arguments: arguments.to_string(),
+                require_advertised: true,
+            },
+            gate.clone(),
+        );
         gate
     }
 

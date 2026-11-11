@@ -24,6 +24,7 @@ interface GooseSessionInfoMeta {
   userSetName?: boolean;
   hasRecipe?: boolean;
   lastMessageSnippet?: string;
+  grind?: string;
 }
 
 export interface SessionListItem {
@@ -41,6 +42,8 @@ export interface SessionListItem {
   userSetName?: boolean;
   hasRecipe?: boolean;
   sessionType?: Session['session_type'];
+  /** The loop (/grind) goal while the loop is on. */
+  grind?: string;
 }
 
 export interface SessionListPage {
@@ -130,6 +133,7 @@ function sessionInfoToListItem(s: SessionInfo): SessionListItem {
     userSetName: meta.userSetName,
     hasRecipe: meta.hasRecipe,
     sessionType: meta.sessionType,
+    grind: meta.grind,
   };
 }
 
@@ -181,6 +185,12 @@ export async function acpGetSessionListItem(sessionId: string): Promise<SessionL
   const client = await getAcpClient();
   const response = await client.goose.sessionInfo_unstable({ sessionId });
   return sessionInfoToListItem(response.session);
+}
+
+/** Turns a session's loop on (with a goal) or off (null), without sending a chat message. */
+export async function acpSetSessionGrind(sessionId: string, goal: string | null): Promise<void> {
+  const client = await getAcpClient();
+  await client.goose.sessionGrind_unstable({ sessionId, goal });
 }
 
 export async function acpLoadSession(sessionId: string): Promise<AcpLoadSessionResult> {

@@ -3,6 +3,9 @@ import { isEqual } from 'lodash';
 import { defineMessages, useIntl } from '../i18n';
 import GooseMessage from './GooseMessage';
 import UserMessage from './UserMessage';
+import { AlertTriangle } from 'lucide-react';
+import Turn from './Turn';
+import { useShowThinking } from '../hooks/useShowThinking';
 import {
   SystemNotificationInline,
   getInlineSystemNotification,
@@ -11,12 +14,18 @@ import {
   CreditsExhaustedNotification,
   getCreditsExhaustedNotification,
 } from './context_management/CreditsExhaustedNotification';
-import type {
-  ImageData,
-  Message,
-  NotificationEvent,
-  SystemNotificationContent,
+import {
+  type ImageData,
+  type Message,
+  type NotificationEvent,
+  type SystemNotificationContent,
 } from '../types/message';
+import {
+  groupIntoTurns,
+  isFailedResult,
+  type DisplayedEntry,
+  type ThinkingMode,
+} from '../utils/turnGrouping';
 import { getModelDisplayName } from './settings/models/predefinedModelsUtils';
 import {
   deriveMessageRowContexts,
@@ -27,6 +36,12 @@ import {
 } from './messageRowContext';
 
 const i18n = defineMessages({
+  failedCalls: {
+    id: 'messageList.failedCalls',
+    defaultMessage: '{count, plural, one {# failed call} other {# failed calls}}',
+  },
+  showOnlyErrors: { id: 'messageList.showOnlyErrors', defaultMessage: 'Show only errors' },
+  showEverything: { id: 'messageList.showEverything', defaultMessage: 'Show everything' },
   modelChanged: {
     id: 'messageList.modelChanged',
     defaultMessage: 'Model changed: {previousModel} → {currentModel}',
@@ -71,6 +86,8 @@ interface MessageRowProps {
   index: number;
   isStreaming: boolean;
   isUser: boolean;
+  /** The answer of a turn: its thinking is with the turn's work, which sits right above it. */
+  afterWork?: boolean;
   message: Message;
   modelChangeMessage: string | null;
   onMessageUpdate?: (
@@ -93,6 +110,7 @@ function MessageRowComponent({
   index,
   isStreaming,
   isUser,
+  afterWork = false,
   message,
   modelChangeMessage,
   onMessageUpdate,
@@ -127,7 +145,7 @@ function MessageRowComponent({
         />
       )}
       <div
-        className={`relative ${index === 0 ? 'mt-0' : 'mt-4'} ${isUser ? 'user' : 'assistant'} ${rowContext.isInToolCallChain ? 'in-chain' : ''}`}
+        className={`relative ${index === 0 ? 'mt-0' : afterWork ? 'mt-2' : 'mt-4'} ${isUser ? 'user' : 'assistant'} ${rowContext.isInToolCallChain ? 'in-chain' : ''}`}
         data-testid="message-container"
       >
         {isUser ? (
@@ -144,6 +162,7 @@ function MessageRowComponent({
             toolConfirmationShownInline={rowContext.toolConfirmationShownInline}
             append={append}
             isStreaming={isStreaming}
+            hideThinking={afterWork}
             submitElicitationResponse={submitElicitationResponse}
           />
         )}
@@ -161,6 +180,8 @@ interface MessageListProps {
   append?: (value: string) => void;
   isUserMessage: (message: Message) => boolean;
   isStreamingMessage?: boolean;
+  /** The turn has stopped to ask the user something (an approval, a question). */
+  isWaitingForUser?: boolean;
   onMessageUpdate?: (
     messageId: string,
     newContent: string,
@@ -181,12 +202,20 @@ export default function MessageList({
   append = emptyAppend,
   isUserMessage,
   isStreamingMessage = false,
+  isWaitingForUser = false,
   onMessageUpdate,
   onRenderingComplete,
   submitElicitationResponse,
 }: MessageListProps) {
   const intl = useIntl();
   const [showAllMessages, setShowAllMessages] = useState(false);
+  // Every failed tool call in the session, in place, so they can be tracked down one by one.
+  const [errorsOnly, setErrorsOnly] = useState(false);
+  // Where a turn's thinking goes follows the "Show Thinking" setting: folded into the rows
+  // ("Collapsed", and until the setting has been read), in view ("Always"), or left out ("Never").
+  const showThinking = useShowThinking();
+  const thinking: ThinkingMode =
+    showThinking === 'never' ? 'hide' : showThinking === 'always' ? 'show' : 'fold';
   const visibleMessages = useMemo(
     () =>
       messages.flatMap((message, index) =>
@@ -238,47 +267,85 @@ export default function MessageList({
     model.confirmed
       ? getModelDisplayName(model.id)
       : intl.formatMessage(i18n.requestedModel, { model: getModelDisplayName(model.id) });
-  const messageRows: React.ReactNode[] = [];
 
-  displayedMessages.forEach(({ message, index }, displayedIndex) => {
-    if (hiddenMessageCount > 0 && displayedIndex === HEAD_MESSAGE_COUNT) {
-      messageRows.push(
-        <div
-          key="hidden-messages"
-          className="my-6 flex items-center justify-center gap-2 text-xs text-text-secondary"
-        >
-          <span>{intl.formatMessage(i18n.hiddenMessages, { count: hiddenMessageCount })}</span>
-          <button
-            type="button"
-            className="underline underline-offset-2 hover:text-text-primary"
-            onClick={() => setShowAllMessages(true)}
-          >
-            {intl.formatMessage(i18n.showAllMessages)}
-          </button>
-        </div>
-      );
-    }
+  const failedCallCount = useMemo(
+    () =>
+      rowContexts.reduce(
+        (count, context) =>
+          count +
+          context.toolStates.filter(
+            (state) => state.response && isFailedResult(state.response.toolResult)
+          ).length,
+        0
+      ),
+    [rowContexts]
+  );
+  const showingErrors = errorsOnly && failedCallCount > 0;
 
+  // The model changed between the reply before this message and this one.
+  const modelChangeFor = (index: number): string | null => {
+    const currentModel = inferenceModel(messages[index]);
+    const previousModel = rowContexts[index].previousModel;
+    return currentModel && previousModel && isModelChange(previousModel, currentModel)
+      ? intl.formatMessage(i18n.modelChanged, {
+          previousModel: modelLabel(previousModel),
+          currentModel: modelLabel(currentModel),
+        })
+      : null;
+  };
+  const modelChangeIndexes = useMemo(() => {
+    const indexes = new Set<number>();
+    messages.forEach((message, index) => {
+      const currentModel = inferenceModel(message);
+      const previousModel = rowContexts[index].previousModel;
+      if (currentModel && previousModel && isModelChange(previousModel, currentModel)) {
+        indexes.add(index);
+      }
+    });
+    return indexes;
+  }, [messages, rowContexts]);
+
+  // One agent turn spans many messages (assistant messages and tool-result messages). They are
+  // laid out as a turn: text in view, each run of tool calls as one row, the answer in full (see
+  // utils/turnGrouping.ts). The errors view looks at the whole session, not only the messages the
+  // long-chat limit shows.
+  const groupedMessages = showingErrors ? visibleMessages : displayedMessages;
+  const groups = useMemo(
+    () =>
+      groupIntoTurns(groupedMessages, {
+        isUserMessage,
+        isNotification: (message) => getSystemNotification(message) !== undefined,
+        rowContexts,
+        thinking,
+        noticeBefore: modelChangeIndexes,
+        breakBefore:
+          !showingErrors && hiddenMessageCount > 0 ? new Set([HEAD_MESSAGE_COUNT]) : undefined,
+      }),
+    [
+      groupedMessages,
+      isUserMessage,
+      rowContexts,
+      thinking,
+      modelChangeIndexes,
+      hiddenMessageCount,
+      showingErrors,
+    ]
+  );
+  const lastMessageIndex = messages.length - 1;
+
+  const renderRow = ({ message, index }: DisplayedEntry, { afterWork = false } = {}) => {
     const isUser = isUserMessage(message);
     const messageIdentifier = message.id ?? `msg-${index}-${message.created}`;
     const messageKey = getSystemNotification(message)
       ? `notification-${messageIdentifier}`
       : messageIdentifier;
     const rowContext = rowContexts[index];
-    const currentModel = inferenceModel(message);
-    const previousModel = rowContext.previousModel;
-    const modelChangeMessage =
-      currentModel && previousModel && isModelChange(previousModel, currentModel)
-        ? intl.formatMessage(i18n.modelChanged, {
-            previousModel: modelLabel(previousModel),
-            currentModel: modelLabel(currentModel),
-          })
-        : null;
+    const modelChangeMessage = modelChangeFor(index);
     const toolNotifications = rowContext.toolStates.map((toolState) =>
       toolCallNotifications.get(toolState.requestId)
     );
 
-    messageRows.push(
+    return (
       <MessageRow
         key={messageKey}
         append={append}
@@ -286,10 +353,11 @@ export default function MessageList({
         isStreaming={
           isStreamingMessage &&
           !isUser &&
-          index === messages.length - 1 &&
+          index === lastMessageIndex &&
           message.role === 'assistant'
         }
         isUser={isUser}
+        afterWork={afterWork}
         message={message}
         modelChangeMessage={modelChangeMessage}
         onMessageUpdate={onMessageUpdate}
@@ -299,7 +367,105 @@ export default function MessageList({
         toolNotifications={toolNotifications}
       />
     );
-  });
+  };
+
+  const messageRows: React.ReactNode[] = [];
+  let hiddenMarkerAdded = false;
+  const addHiddenMarker = () => {
+    hiddenMarkerAdded = true;
+    messageRows.push(
+      <div
+        key="hidden-messages"
+        className="my-6 flex items-center justify-center gap-2 text-xs text-text-secondary"
+      >
+        <span>{intl.formatMessage(i18n.hiddenMessages, { count: hiddenMessageCount })}</span>
+        <button
+          type="button"
+          className="underline underline-offset-2 hover:text-text-primary"
+          onClick={() => setShowAllMessages(true)}
+        >
+          {intl.formatMessage(i18n.showAllMessages)}
+        </button>
+      </div>
+    );
+  };
+  const firstTailIndex =
+    !showingErrors && hiddenMessageCount > 0
+      ? displayedMessages[HEAD_MESSAGE_COUNT]?.index
+      : undefined;
+
+  if (failedCallCount > 0) {
+    messageRows.push(
+      <div
+        key="errors-filter"
+        className="sticky top-0 z-10 mb-2 flex items-center gap-2 text-xs text-text-secondary"
+      >
+        <button
+          type="button"
+          data-testid="errors-only-toggle"
+          aria-pressed={showingErrors}
+          onClick={() => setErrorsOnly((value) => !value)}
+          className={`flex items-center gap-1 rounded border px-2 py-0.5 transition-colors ${
+            showingErrors
+              ? 'border-red-500 bg-red-500/10 text-red-500'
+              : 'border-border-subtle bg-background-primary hover:text-text-primary'
+          }`}
+        >
+          <AlertTriangle className="h-3 w-3 text-red-500" />
+          {intl.formatMessage(i18n.failedCalls, { count: failedCallCount })}
+          <span className="opacity-70">
+            · {intl.formatMessage(showingErrors ? i18n.showEverything : i18n.showOnlyErrors)}
+          </span>
+        </button>
+      </div>
+    );
+  }
+
+  for (const group of groups) {
+    // Errors view: only the turns that have a failed call, opened, showing just those calls.
+    if (showingErrors && (group.kind === 'single' || group.stats.failedToolCalls === 0)) {
+      continue;
+    }
+
+    const firstIndex = group.kind === 'single' ? group.entry.index : group.firstIndex;
+    if (!hiddenMarkerAdded && firstTailIndex !== undefined && firstIndex >= firstTailIndex) {
+      addHiddenMarker();
+    }
+
+    if (group.kind === 'single') {
+      messageRows.push(renderRow(group.entry));
+      continue;
+    }
+
+    messageRows.push(
+      <div
+        key={group.key}
+        className={`relative ${group.firstIndex === 0 ? 'mt-0' : 'mt-4'} assistant`}
+        data-testid="turn"
+      >
+        <Turn
+          blocks={group.blocks}
+          startedAt={group.stats.startedAt}
+          working={
+            isStreamingMessage &&
+            !isWaitingForUser &&
+            group.final === null &&
+            group.lastIndex === lastMessageIndex
+          }
+          errorsOnly={showingErrors}
+          rowContexts={rowContexts}
+          toolCallNotifications={toolCallNotifications}
+          sessionId={sessionId}
+          append={append}
+          noticeFor={modelChangeFor}
+          submitElicitationResponse={submitElicitationResponse}
+        />
+      </div>
+    );
+    if (group.final && !showingErrors) {
+      messageRows.push(renderRow(group.final, { afterWork: true }));
+    }
+  }
 
   return <>{messageRows}</>;
 }

@@ -76,6 +76,9 @@ pub struct InventoryModel {
     pub context_limit: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<bool>,
+    /// Taken from the provider file, never stored with the snapshot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_efforts: Option<Vec<String>>,
     /// Whether this model should appear in the compact recommended picker.
     pub recommended: bool,
 }
@@ -300,12 +303,13 @@ impl ProviderInventoryService {
             .read()
             .unwrap_or_else(|poisoned| recover_poisoned_read(poisoned, "refreshing_keys"))
             .contains(&descriptor.identity.inventory_key);
-        let models = inventory_models_from_snapshot(
+        let mut models = inventory_models_from_snapshot(
             snapshot.as_ref(),
             &descriptor.identity.provider_family,
             &descriptor.static_models,
             descriptor.supports_refresh,
         );
+        apply_declared_reasoning(&mut models, &descriptor.static_models);
 
         Ok(Some(ProviderInventoryEntry {
             provider_id: descriptor.provider_id,
@@ -840,6 +844,7 @@ impl ProviderInventoryService {
                         .map(usize::try_from)
                         .transpose()?,
                     reasoning: row.try_get("reasoning")?,
+                    reasoning_efforts: None,
                     recommended: row
                         .try_get::<Option<bool>, _>("recommended")?
                         .unwrap_or(false),
@@ -1074,6 +1079,7 @@ fn enrich_model_ids_with_canonical(
                 family: None,
                 context_limit: None,
                 reasoning: None,
+                reasoning_efforts: None,
                 recommended: false,
             })
             .collect();
@@ -1160,6 +1166,23 @@ fn configured_models_to_inventory(
     result
 }
 
+/// A provider file that marks a model as reasoning wins over the catalog, which knows nothing
+/// about a local model. Without this the UI never offers a thinking level for it.
+fn apply_declared_reasoning(models: &mut [InventoryModel], declared: &[ModelInfo]) {
+    for model in models.iter_mut() {
+        let Some(info) = declared
+            .iter()
+            .find(|info| info.name == model.id || info.name == model.name)
+        else {
+            continue;
+        };
+        if info.reasoning {
+            model.reasoning = Some(true);
+            model.reasoning_efforts = info.reasoning_efforts.clone();
+        }
+    }
+}
+
 fn inventory_models_from_snapshot(
     snapshot: Option<&InventorySnapshot>,
     provider_family: &str,
@@ -1210,6 +1233,7 @@ fn enriched_model(
             .map(|model| model.limit.context)
             .or(fallback_context_limit),
         reasoning: metadata.as_ref().and_then(|model| model.reasoning),
+        reasoning_efforts: None,
         recommended: false,
     }
 }
@@ -1429,6 +1453,26 @@ mod tests {
     }
 
     #[test]
+    fn declared_reasoning_marks_an_uncatalogued_model() {
+        let mut declared = ModelInfo::new("qwen3.8-flash-next-local");
+        declared.reasoning = true;
+        declared.reasoning_efforts = Some(vec!["none".to_string(), "xhigh".to_string()]);
+        let plain = ModelInfo::new("some-other-local-model");
+        let mut models =
+            configured_models_to_inventory("openai", &[declared.clone(), plain.clone()]);
+        assert_eq!(models[0].reasoning, None);
+
+        apply_declared_reasoning(&mut models, &[declared, plain]);
+
+        assert_eq!(models[0].reasoning, Some(true));
+        assert_eq!(
+            models[0].reasoning_efforts,
+            Some(vec!["none".to_string(), "xhigh".to_string()])
+        );
+        assert_eq!(models[1].reasoning, None);
+    }
+
+    #[test]
     fn inventory_uses_configured_models_before_first_successful_refresh() {
         let configured_models = [ModelInfo::new("claude-sonnet-4-5").with_context_limit(0)];
         let snapshot = InventorySnapshot {
@@ -1471,6 +1515,7 @@ mod tests {
                 family: None,
                 context_limit: None,
                 reasoning: None,
+                reasoning_efforts: None,
                 recommended: false,
             }],
             last_updated_at: Some(Utc::now()),

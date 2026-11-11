@@ -439,11 +439,12 @@ export const zLiveVoiceAvailabilityResponse_unstable = z.object({
 });
 
 /**
- * Get a diagnostic report for a session.
+ * Start a live voice interaction for a session.
  */
 export const zLiveVoiceStartRequest_unstable = z.object({
     sessionId: z.string(),
     offerSdp: z.string(),
+    instructions: z.string().nullish(),
     _meta: z.record(z.string(), z.unknown()).nullish()
 });
 
@@ -466,6 +467,59 @@ export const zDiagnosticsGetRequest_unstable = z.object({
 
 export const zDiagnosticsGetResponse_unstable = z.object({
     report: z.unknown()
+});
+
+/**
+ * Break down what fills the model's context window if the session were
+ * prompted right now. Makes no model call.
+ */
+export const zContextReportRequest_unstable = z.object({
+    sessionId: z.string()
+});
+
+export const zContextReportModel = z.object({
+    provider: z.string().nullish(),
+    modelName: z.string(),
+    contextLimit: z.int().gte(0)
+});
+
+export const zContextCategory = z.union([
+    z.literal('extension_instructions'),
+    z.literal('turn_context'),
+    z.literal('tool_definitions'),
+    z.literal('compaction_summary'),
+    z.literal('messages'),
+    z.literal('system_prompt'),
+    z.literal('additional_instructions')
+]);
+
+/**
+ * Parts add up to their segment's `tokenCount`, except where a segment is
+ * split into prose sections; there the headings and framing are carried by
+ * the segment alone.
+ */
+export const zContextPart = z.object({
+    label: z.string(),
+    source: z.string().nullish(),
+    tokenCount: z.int().gte(0),
+    contentPreview: z.string().nullish()
+});
+
+export const zContextSegment = z.object({
+    category: zContextCategory,
+    label: z.string(),
+    source: z.string().nullish(),
+    tokenCount: z.int().gte(0),
+    contentPreview: z.string().nullish(),
+    parts: z.array(zContextPart).optional()
+});
+
+export const zContextReportResponse_unstable = z.object({
+    model: zContextReportModel,
+    totalTokens: z.int().gte(0),
+    segments: z.array(zContextSegment),
+    providerManagesContext: z.boolean(),
+    autoCompactionPending: z.boolean()
 });
 
 /**
@@ -605,6 +659,7 @@ export const zProviderInventoryModelDto = z.object({
     family: z.string().nullish(),
     contextLimit: z.int().gte(0).nullish(),
     reasoning: z.boolean().nullish(),
+    reasoningEfforts: z.array(z.string()).nullish(),
     recommended: z.boolean().optional().default(false)
 });
 
@@ -1613,6 +1668,36 @@ export const zRenameSessionRequest_unstable = z.object({
 });
 
 /**
+ * Turn a session's loop (the /grind goal) on or off without sending a chat message, so it can
+ * be switched while a turn is running. `goal: null` (or blank) turns it off.
+ */
+export const zSetSessionGrindRequest_unstable = z.object({
+    sessionId: z.string(),
+    goal: z.string().nullish().default(null)
+});
+
+/**
+ * The local image models the switcher (StrataTray's control port) offers, and the one in use.
+ */
+export const zImageModelsRequest_unstable = z.record(z.string(), z.unknown());
+
+/**
+ * Image models response. `error` is set (and the lists empty) when the switcher cannot be asked.
+ */
+export const zImageModelsResponse_unstable = z.object({
+    current: z.string().nullish().default(null),
+    models: z.array(z.string()).optional().default([]),
+    error: z.string().nullish().default(null)
+});
+
+/**
+ * Put an image model on the local image server (the switcher restarts it when needed).
+ */
+export const zSwitchImageModelRequest_unstable = z.object({
+    model: z.string()
+});
+
+/**
  * Archive a session (soft delete).
  */
 export const zArchiveSessionRequest_unstable = z.object({
@@ -2324,6 +2409,7 @@ export const zExtRequest = z.object({
             zLiveVoiceStartRequest_unstable,
             zLiveVoiceStopRequest_unstable,
             zDiagnosticsGetRequest_unstable,
+            zContextReportRequest_unstable,
             zListPromptsRequest_unstable,
             zGetPromptRequest_unstable,
             zSavePromptRequest_unstable,
@@ -2389,6 +2475,9 @@ export const zExtRequest = z.object({
             zTruncateSessionConversationRequest_unstable,
             zUpdateSessionProjectRequest_unstable,
             zRenameSessionRequest_unstable,
+            zSetSessionGrindRequest_unstable,
+            zImageModelsRequest_unstable,
+            zSwitchImageModelRequest_unstable,
             zArchiveSessionRequest_unstable,
             zUnarchiveSessionRequest_unstable,
             zCreateSourceRequest_unstable,
@@ -2440,6 +2529,7 @@ export const zExtResponse = z.union([
                 zLiveVoiceAvailabilityResponse_unstable,
                 zLiveVoiceStartResponse_unstable,
                 zDiagnosticsGetResponse_unstable,
+                zContextReportResponse_unstable,
                 zListPromptsResponse_unstable,
                 zGetPromptResponse_unstable,
                 zPromptOperationResponse_unstable,
@@ -2484,6 +2574,7 @@ export const zExtResponse = z.union([
                 zKillRunningJobResponse_unstable,
                 zInspectRunningJobResponse_unstable,
                 zGetSessionInfoResponse_unstable,
+                zImageModelsResponse_unstable,
                 zCreateSourceResponse_unstable,
                 zListSourcesResponse_unstable,
                 zListAgentMentionsResponse_unstable,

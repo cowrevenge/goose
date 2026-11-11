@@ -989,3 +989,46 @@ pre:has(> code.bg-inline-code) {
   background-color: #393647;
   color: #edecee;
 }
+
+/*
+ * A turn reads as one column, the way Claude's transcript does: what the model writes has no
+ * box of its own, between the rows of a turn or as its answer. Upstream's dark theme draws one
+ * (its light theme never did); with it, text would move when a reply that began as text goes on
+ * to make a call and becomes a note of the turn.
+ */
+.dark .agent-message-bubble {
+  background-color: transparent;
+  border-radius: 0;
+  padding: 0;
+}
+
+/* The row a turn is working in right now (TurnRun): a band of light runs through its text. */
+@keyframes turn-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+
+.turn-shimmer {
+  background-image: linear-gradient(
+    90deg,
+    currentColor 40%,
+    color-mix(in srgb, currentColor 35%, transparent) 50%,
+    currentColor 60%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: turn-shimmer 2.2s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .turn-shimmer {
+    animation: none;
+    -webkit-text-fill-color: currentColor;
+  }
+}

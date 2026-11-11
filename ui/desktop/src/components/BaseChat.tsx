@@ -53,6 +53,14 @@ const i18n = defineMessages({
     id: 'baseChat.retry',
     defaultMessage: 'Retry',
   },
+  changeFolder: {
+    id: 'baseChat.changeFolder',
+    defaultMessage: 'Change folder',
+  },
+  changeFolderFailed: {
+    id: 'baseChat.changeFolderFailed',
+    defaultMessage: 'Could not move the session to that folder: {error}',
+  },
   reconnecting: {
     id: 'baseChat.reconnecting',
     defaultMessage: 'Connection lost. Reconnecting…',
@@ -88,6 +96,7 @@ export default function BaseChat({
   const shouldStartLiveVoice = location.state?.startLiveVoice === true;
   const [hasStartedUsingRecipe, setHasStartedUsingRecipe] = React.useState(false);
   const [acpRecovering, setAcpRecovering] = useState(isAcpRecovering);
+  const [changeFolderError, setChangeFolderError] = useState<string | null>(null);
   const [liveVoiceAvailability, setLiveVoiceAvailability] =
     useState<LiveVoiceAvailabilityResponse_unstable | null>(null);
   const isMobile = useIsMobile();
@@ -427,6 +436,24 @@ export default function BaseChat({
       ? initialMessage.msg
       : recipePrompt;
 
+  // The session's folder was deleted, renamed or is on a drive that is not there: let the user
+  // pick another one, save it on the session, and load again.
+  const loadErrorIsFolder = /directory path|cwd must be/i.test(sessionLoadError ?? '');
+  const changeFolderAfterLoadError = async () => {
+    const result = await window.electron.directoryChooser();
+    if (result.canceled || result.filePaths.length === 0) return;
+    const newDir = result.filePaths[0];
+    try {
+      await acpUpdateWorkingDir(sessionId, newDir);
+    } catch (error) {
+      setChangeFolderError(error instanceof Error ? error.message : String(error));
+      return;
+    }
+    setChangeFolderError(null);
+    window.electron.addRecentDir(newDir);
+    await retrySessionLoad();
+  };
+
   if (sessionLoadError) {
     return (
       <div className="h-full flex flex-col min-h-0">
@@ -439,8 +466,18 @@ export default function BaseChat({
                     {intl.formatMessage(i18n.failedToLoadSession)}
                   </h3>
                   <p className="text-sm">{sessionLoadError}</p>
+                  {changeFolderError && (
+                    <p className="text-sm mt-2">
+                      {intl.formatMessage(i18n.changeFolderFailed, { error: changeFolderError })}
+                    </p>
+                  )}
                 </div>
                 <div className="flex gap-2">
+                  {loadErrorIsFolder && (
+                    <Button variant="outline" onClick={() => void changeFolderAfterLoadError()}>
+                      {intl.formatMessage(i18n.changeFolder)}
+                    </Button>
+                  )}
                   <Button variant="outline" onClick={() => void retrySessionLoad()}>
                     {intl.formatMessage(i18n.retry)}
                   </Button>
@@ -515,6 +552,7 @@ export default function BaseChat({
                       append={isSubagentSession ? undefined : appendToChat}
                       isUserMessage={isUserMessage}
                       isStreamingMessage={chatState !== ChatState.Idle}
+                      isWaitingForUser={chatState === ChatState.WaitingForUserInput}
                       onRenderingComplete={handleRenderingComplete}
                       onMessageUpdate={isSubagentSession ? undefined : onMessageUpdate}
                       submitElicitationResponse={submitElicitationResponse}

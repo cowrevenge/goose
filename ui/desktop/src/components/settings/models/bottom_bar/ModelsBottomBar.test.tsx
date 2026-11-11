@@ -14,6 +14,7 @@ let mockCurrentProvider: string | null = 'config-provider';
 const mockGetProviders = vi.fn();
 const mockOnModelChanged = vi.fn();
 const mockPreventCloseAutoFocus = vi.fn();
+const mockFetchModelThinking = vi.fn();
 
 vi.mock('../../../ModelAndProviderContext', () => ({
   useModelAndProvider: () => ({
@@ -31,14 +32,11 @@ vi.mock('../../../ConfigContext', () => ({
 vi.mock('../modelInterface', () => ({
   getProviderMetadata: vi.fn().mockResolvedValue({ display_name: 'Config Provider' }),
   fetchModelReasoning: vi.fn().mockResolvedValue(null),
+  fetchModelThinking: (...args: unknown[]) => mockFetchModelThinking(...args),
 }));
 
 vi.mock('../predefinedModelsUtils', () => ({
   getModelDisplayName: (model: string) => `Display ${model}`,
-}));
-
-vi.mock('../../../bottom_menu/BottomMenuAlertPopover', () => ({
-  default: () => null,
 }));
 
 vi.mock('../../../ui/dropdown-menu', () => ({
@@ -99,6 +97,43 @@ describe('ModelsBottomBar', () => {
     mockCurrentModel = 'config-model';
     mockCurrentProvider = 'config-provider';
     mockGetProviders.mockResolvedValue([]);
+    mockFetchModelThinking.mockResolvedValue({ reasoning: false, efforts: null });
+  });
+
+  it('offers only the thinking levels the model server accepts, named its way', async () => {
+    mockFetchModelThinking.mockResolvedValue({
+      reasoning: true,
+      efforts: ['xhigh', 'none', 'medium', 'low'],
+    });
+    renderWithIntl(
+      <ModelsBottomBar
+        sessionId={null}
+        dropdownRef={createDropdownRef()}
+        setView={vi.fn()}
+        onModelChanged={mockOnModelChanged}
+      />
+    );
+
+    expect(await screen.findByText('XHigh')).toBeInTheDocument();
+    const levels = screen
+      .getAllByRole('button')
+      .map((button) => button.textContent)
+      .filter((text) => ['Off', 'Low', 'Medium', 'High', 'XHigh', 'Max'].includes(text ?? ''));
+    expect(levels).toEqual(['Off', 'Low', 'Medium', 'XHigh']);
+  });
+
+  it('hides the thinking picker for a model that does not reason', async () => {
+    renderWithIntl(
+      <ModelsBottomBar
+        sessionId={null}
+        dropdownRef={createDropdownRef()}
+        setView={vi.fn()}
+        onModelChanged={mockOnModelChanged}
+      />
+    );
+
+    await screen.findByText('Display config-model');
+    expect(screen.queryByText('Thinking')).not.toBeInTheDocument();
   });
 
   it('shows a loading placeholder while the active session model is still loading', async () => {

@@ -348,6 +348,19 @@ export async function acpSaveThinkingEffort(effort: ThinkingEffort): Promise<voi
   });
 }
 
+/** Change only the thinking level of an active session, keeping its provider and model. */
+export async function acpSetSessionThinkingEffort(
+  sessionId: string,
+  thinkingEffort: ThinkingEffort
+): Promise<void> {
+  const client = await getAcpClient();
+  await client.connection.agent.request(methods.agent.session.setConfigOption, {
+    sessionId,
+    configId: 'thinking_effort',
+    value: thinkingEffort,
+  });
+}
+
 export type AppliedSessionProviderModel = {
   providerId?: string;
   modelId?: string;

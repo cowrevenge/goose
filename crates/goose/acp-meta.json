@@ -86,6 +86,11 @@
       "responseType": "DiagnosticsGetResponse_unstable"
     },
     {
+      "method": "_goose/unstable/context/report",
+      "requestType": "ContextReportRequest_unstable",
+      "responseType": "ContextReportResponse_unstable"
+    },
+    {
       "method": "_goose/unstable/config/prompts/list",
       "requestType": "ListPromptsRequest_unstable",
       "responseType": "ListPromptsResponse_unstable"
@@ -408,6 +413,21 @@
     {
       "method": "_goose/unstable/session/rename",
       "requestType": "RenameSessionRequest_unstable",
+      "responseType": "EmptyResponse"
+    },
+    {
+      "method": "_goose/unstable/session/grind",
+      "requestType": "SetSessionGrindRequest_unstable",
+      "responseType": "EmptyResponse"
+    },
+    {
+      "method": "_goose/unstable/image/models",
+      "requestType": "ImageModelsRequest_unstable",
+      "responseType": "ImageModelsResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/image/switch",
+      "requestType": "SwitchImageModelRequest_unstable",
       "responseType": "EmptyResponse"
     },
     {

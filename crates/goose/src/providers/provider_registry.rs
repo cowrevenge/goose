@@ -86,6 +86,14 @@ impl ProviderEntry {
         {
             model.supports_vision = Some(supports_vision);
         }
+        // Same for reasoning: a local model the catalog has never heard of only gets a thinking
+        // level when its provider file says it reasons.
+        if model.reasoning.is_none()
+            && find_declared_model(&self.metadata.known_models, &model.model_name)
+                .is_some_and(|m| m.reasoning)
+        {
+            model.reasoning = Some(true);
+        }
         if let Some(catalog_provider_id) = &self.catalog_provider_id {
             model = model.with_canonical_vision_support(catalog_provider_id);
         }
@@ -425,6 +433,7 @@ mod tests {
             preserves_thinking: false,
             emit_clear_thinking: false,
             setup: None,
+            model_switch_url: None,
         }
     }
 
@@ -567,5 +576,32 @@ mod tests {
         assert_eq!(vision.supports_vision, Some(true));
         assert_eq!(text.supports_vision, Some(false));
         assert_eq!(undeclared.supports_vision, None);
+    }
+
+    #[test]
+    fn declared_reasoning_marks_a_local_model_as_reasoning() {
+        let mut registry = ProviderRegistry::new(None);
+        let mut config = test_config();
+        let mut thinker = ModelInfo::new("qwen-local");
+        thinker.reasoning = true;
+        config.models = vec![thinker, ModelInfo::new("plain-local")];
+        registry.register_with_name::<OpenAiProviderDef, _, _>(
+            &config,
+            ProviderType::Custom,
+            false,
+            |_| unreachable!("constructor is not used by this test"),
+            || Ok(InventoryIdentityInput::new("custom_hf", "custom_hf")),
+        );
+        let entry = &registry.entries["custom_hf"];
+
+        let thinker = entry
+            .normalize_model_config(ModelConfig::new("qwen-local"))
+            .unwrap();
+        let plain = entry
+            .normalize_model_config(ModelConfig::new("plain-local"))
+            .unwrap();
+
+        assert!(thinker.is_reasoning_model());
+        assert!(!plain.is_reasoning_model());
     }
 }

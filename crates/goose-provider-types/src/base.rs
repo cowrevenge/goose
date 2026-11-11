@@ -280,6 +280,11 @@ pub struct ModelInfo {
     /// Static params merged into the request body for this model.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request_params: Option<HashMap<String, Value>>,
+    /// The `reasoning_effort` values this model's server accepts, for a model outside the provider
+    /// catalog (a local OpenAI-compatible server, say). When set, the thinking level picked in the
+    /// UI is sent as the closest of these, so "off" can reach a server that spells it `none`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_efforts: Option<Vec<String>>,
 }
 
 impl ModelInfo {
@@ -298,6 +303,7 @@ impl ModelInfo {
             supports_vision: None,
             thinking_preservation_format: None,
             request_params: None,
+            reasoning_efforts: None,
         }
     }
 
@@ -337,6 +343,7 @@ impl ModelInfo {
             supports_vision: None,
             thinking_preservation_format: None,
             request_params: None,
+            reasoning_efforts: None,
         }
     }
 }
@@ -390,6 +397,7 @@ pub fn model_info_for_provider_model(provider_name: &str, model_name: &str) -> M
         supports_vision: None,
         thinking_preservation_format: None,
         request_params: None,
+        reasoning_efforts: None,
     }
 }
 
@@ -1135,6 +1143,7 @@ mod tests {
             supports_vision: None,
             thinking_preservation_format: None,
             request_params: None,
+            reasoning_efforts: None,
         };
         assert_eq!(info.context_limit, Some(1000));
 
@@ -1153,6 +1162,7 @@ mod tests {
             supports_vision: None,
             thinking_preservation_format: None,
             request_params: None,
+            reasoning_efforts: None,
         };
         assert_eq!(info, info2);
 
@@ -1171,6 +1181,7 @@ mod tests {
             supports_vision: None,
             thinking_preservation_format: None,
             request_params: None,
+            reasoning_efforts: None,
         };
         assert_ne!(info, info3);
     }

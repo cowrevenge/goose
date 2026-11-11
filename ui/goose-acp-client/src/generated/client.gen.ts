@@ -21,6 +21,8 @@ import type {
   ConfigReadResponse_unstable,
   ConfigRemoveRequest_unstable,
   ConfigUpsertRequest_unstable,
+  ContextReportRequest_unstable,
+  ContextReportResponse_unstable,
   CreateScheduleRequest_unstable,
   CreateScheduleResponse_unstable,
   CreateSourceRequest_unstable,
@@ -73,6 +75,8 @@ import type {
   GetToolsResponse_unstable,
   GooseToolCallRequest_unstable,
   GooseToolCallResponse_unstable,
+  ImageModelsRequest_unstable,
+  ImageModelsResponse_unstable,
   ImportSessionRequest_unstable,
   ImportSessionResponse_unstable,
   ImportSourcesRequest_unstable,
@@ -173,11 +177,13 @@ import type {
   ScheduleRecipeRequest_unstable,
   SetConfigExtensionEnabledRequest_unstable,
   SetRecipeSlashCommandRequest_unstable,
+  SetSessionGrindRequest_unstable,
   SetSessionSystemPromptRequest_unstable,
   SetToolPermissionsRequest_unstable,
   SetToolPermissionsResponse_unstable,
   SteerSessionRequest_unstable,
   SteerSessionResponse_unstable,
+  SwitchImageModelRequest_unstable,
   TruncateSessionConversationRequest_unstable,
   UnarchiveSessionRequest_unstable,
   UnpauseScheduleRequest_unstable,
@@ -196,6 +202,7 @@ import {
   zCanonicalModelInfoResponse_unstable,
   zConfigReadAllResponse_unstable,
   zConfigReadResponse_unstable,
+  zContextReportResponse_unstable,
   zCreateScheduleResponse_unstable,
   zCreateSourceResponse_unstable,
   zCustomProviderCreateResponse_unstable,
@@ -218,6 +225,7 @@ import {
   zGetSessionInfoResponse_unstable,
   zGetToolsResponse_unstable,
   zGooseToolCallResponse_unstable,
+  zImageModelsResponse_unstable,
   zImportSessionResponse_unstable,
   zImportSourcesResponse_unstable,
   zInspectRunningJobResponse_unstable,
@@ -428,6 +436,18 @@ export class GooseExtClient {
     return zDiagnosticsGetResponse_unstable.parse(
       raw,
     ) as DiagnosticsGetResponse_unstable;
+  }
+
+  async contextReport_unstable(
+    params: ContextReportRequest_unstable,
+  ): Promise<ContextReportResponse_unstable> {
+    const raw = await this.conn.request(
+      "_goose/unstable/context/report",
+      params,
+    );
+    return zContextReportResponse_unstable.parse(
+      raw,
+    ) as ContextReportResponse_unstable;
   }
 
   async configPromptsList_unstable(
@@ -1101,6 +1121,27 @@ export class GooseExtClient {
     params: RenameSessionRequest_unstable,
   ): Promise<void> {
     await this.conn.request("_goose/unstable/session/rename", params);
+  }
+
+  async sessionGrind_unstable(
+    params: SetSessionGrindRequest_unstable,
+  ): Promise<void> {
+    await this.conn.request("_goose/unstable/session/grind", params);
+  }
+
+  async imageModels_unstable(
+    params: ImageModelsRequest_unstable,
+  ): Promise<ImageModelsResponse_unstable> {
+    const raw = await this.conn.request("_goose/unstable/image/models", params);
+    return zImageModelsResponse_unstable.parse(
+      raw,
+    ) as ImageModelsResponse_unstable;
+  }
+
+  async imageSwitch_unstable(
+    params: SwitchImageModelRequest_unstable,
+  ): Promise<void> {
+    await this.conn.request("_goose/unstable/image/switch", params);
   }
 
   async sessionArchive_unstable(

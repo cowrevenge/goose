@@ -1,6 +1,5 @@
-import { AppEvents } from '../constants/events';
 import React, { useRef, useState, useEffect, useMemo, useCallback } from 'react';
-import { ArrowUp, Bug, ScrollText } from 'lucide-react';
+import { ArrowUp } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/Tooltip';
 import { Button } from './ui/button';
 import type { View } from '../utils/navigationUtils';
@@ -13,8 +12,9 @@ import { DirSwitcher } from './bottom_menu/DirSwitcher';
 import { GitBranchIndicator } from './GitBranchIndicator';
 import ModelsBottomBar from './settings/models/bottom_bar/ModelsBottomBar';
 import { BottomMenuExtensionSelection } from './bottom_menu/BottomMenuExtensionSelection';
+import { LoopToggle } from './bottom_menu/LoopToggle';
+import { ImageModelPicker } from './bottom_menu/ImageModelPicker';
 import { cn } from '../utils';
-import { AlertType, useAlerts } from './alerts';
 import { useModelAndProvider } from './ModelAndProviderContext';
 import { acpGetProviderDetails } from '../acp/providers';
 import { useAudioRecorder } from '../hooks/useAudioRecorder';
@@ -24,15 +24,15 @@ import MentionPopover, { DisplayItemWithMatch } from './MentionPopover';
 import { COST_TRACKING_ENABLED } from '../updates';
 import { CostTracker } from './bottom_menu/CostTracker';
 import { ContextWindowIndicator } from './bottom_menu/ContextWindowIndicator';
+import { ContextXrayDialog } from './context_xray/ContextXrayDialog';
 import { DroppedFile, useFileDrop } from '../hooks/useFileDrop';
 import { Recipe } from '../recipe';
 import { MessageQueue, QueuedMessage } from './MessageQueue';
 import { detectInterruption } from '../utils/interruptionDetector';
-import { DiagnosticsModal } from './ui/Diagnostics';
 import type { Message } from '../types/message';
 import { getInitialWorkingDir } from '../utils/workingDir';
 import { getPredefinedModelsFromEnv } from './settings/models/predefinedModelsUtils';
-import { trackFileAttached, trackVoiceDictation, trackDiagnosticsOpened } from '../utils/analytics';
+import { trackFileAttached, trackVoiceDictation } from '../utils/analytics';
 import { getNavigationShortcutText } from '../utils/keyboardShortcuts';
 import { UserInput, ImageData } from '../types/message';
 import { compressImageDataUrl } from '../utils/conversionUtils';
@@ -72,10 +72,7 @@ interface PastedImage {
   error?: string;
 }
 
-type ChatInputLiveVoice = Pick<
-  LiveVoiceController,
-  'phase' | 'muted' | 'stop' | 'toggleMute'
-> & {
+type ChatInputLiveVoice = Pick<LiveVoiceController, 'phase' | 'muted' | 'stop' | 'toggleMute'> & {
   availability: LiveVoiceAvailabilityResponse_unstable | null;
   activeInAnotherSession: boolean;
   start: () => Promise<void>;
@@ -97,14 +94,6 @@ const MAX_IMAGES_PER_MESSAGE = 10;
 
 const TOKEN_LIMIT_DEFAULT = 128000; // used before a session has a backend-resolved limit
 
-const getContextAlertType = (totalTokens: number, tokenLimit: number): AlertType => {
-  const percentage = tokenLimit ? (totalTokens / tokenLimit) * 100 : 0;
-
-  if (percentage > 90) return AlertType.Error;
-  if (percentage > 75) return AlertType.Warning;
-  return AlertType.Info;
-};
-
 // Manual compact trigger message - must match backend constant
 const MANUAL_COMPACT_TRIGGER = '/compact';
 
@@ -124,10 +113,6 @@ const i18n = defineMessages({
   unknownType: {
     id: 'chatInput.unknownType',
     defaultMessage: 'Unknown type',
-  },
-  contextWindow: {
-    id: 'chatInput.contextWindow',
-    defaultMessage: 'Context window',
   },
   waitingForImages: {
     id: 'chatInput.waitingForImages',
@@ -324,7 +309,6 @@ export default function ChatInput({
     setLastInterruption(null);
   }, []);
 
-  const { alerts, addAlert, clearAlerts } = useAlerts();
   const dropdownRef: React.RefObject<HTMLDivElement> = useRef<HTMLDivElement>(
     null
   ) as React.RefObject<HTMLDivElement>;
@@ -358,8 +342,7 @@ export default function ChatInput({
     }
   }, [sessionModel, sessionProvider, configModel, configProvider, sessionId, modelOverride]);
   const [tokenLimit, setTokenLimit] = useState<number>(TOKEN_LIMIT_DEFAULT);
-  const [isTokenLimitLoaded, setIsTokenLimitLoaded] = useState(false);
-  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
+  const [contextXrayOpen, setContextXrayOpen] = useState(false);
   const [workingDirOverride, setWorkingDirOverride] = useState<string | null>(null);
   const currentWorkingDir = workingDirOverride ?? workingDir ?? getInitialWorkingDir();
 
@@ -640,10 +623,8 @@ export default function ChatInput({
     try {
       if (sessionId) {
         setTokenLimit(0);
-        setIsTokenLimitLoaded(false);
         return;
       }
-      setIsTokenLimitLoaded(false);
 
       // Use effective model/provider (includes overrides from in-session model changes),
       // fall back to config defaults
@@ -655,7 +636,6 @@ export default function ChatInput({
         provider = configModelAndProvider.provider;
       }
       if (!model || !provider) {
-        setIsTokenLimitLoaded(true);
         return;
       }
 
@@ -664,7 +644,6 @@ export default function ChatInput({
       const predefinedModel = predefinedModels.find((m) => m.name === model);
       if (predefinedModel?.context_limit) {
         setTokenLimit(predefinedModel.context_limit);
-        setIsTokenLimitLoaded(true);
         return;
       }
 
@@ -672,7 +651,6 @@ export default function ChatInput({
       const canonicalInfo = await fetchCanonicalModelInfo(provider, model);
       if (canonicalInfo?.contextLimit) {
         setTokenLimit(canonicalInfo.contextLimit);
-        setIsTokenLimitLoaded(true);
         return;
       }
 
@@ -682,19 +660,16 @@ export default function ChatInput({
         const modelConfig = currentProvider.metadata.known_models.find((m) => m.name === model);
         if (modelConfig?.context_limit) {
           setTokenLimit(modelConfig.context_limit);
-          setIsTokenLimitLoaded(true);
           return;
         }
       }
 
       // Priority 4: Use default if nothing else found
       setTokenLimit(TOKEN_LIMIT_DEFAULT);
-      setIsTokenLimitLoaded(true);
     } catch (err) {
       console.error('Error loading providers or token limit:', err);
       // Set default limit on error
       setTokenLimit(TOKEN_LIMIT_DEFAULT);
-      setIsTokenLimitLoaded(true);
     }
   };
 
@@ -709,40 +684,12 @@ export default function ChatInput({
     if (contextLimit === undefined) {
       if (sessionId) {
         setTokenLimit(0);
-        setIsTokenLimitLoaded(false);
       }
       return;
     }
 
     setTokenLimit(contextLimit);
-    setIsTokenLimitLoaded(true);
   }, [contextLimit, sessionId]);
-
-  // Handle token usage alerts
-  useEffect(() => {
-    clearAlerts();
-
-    // Show alert when either there is registered token usage, or we know the limit
-    if ((totalTokens && totalTokens > 0) || (isTokenLimitLoaded && tokenLimit)) {
-      addAlert({
-        type: getContextAlertType(totalTokens || 0, tokenLimit),
-        message: intl.formatMessage(i18n.contextWindow),
-        progress: {
-          current: totalTokens || 0,
-          total: tokenLimit,
-        },
-        showCompactButton: true,
-        compactButtonDisabled: !totalTokens || isLoading,
-        onCompact: () => {
-          window.dispatchEvent(new CustomEvent(AppEvents.HIDE_ALERT_POPOVER));
-          handleSubmit({ msg: MANUAL_COMPACT_TRIGGER, images: [] });
-        },
-        compactIcon: <ScrollText size={12} />,
-      });
-    }
-
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [totalTokens, tokenLimit, isTokenLimitLoaded, isLoading, addAlert, clearAlerts]);
 
   // Cleanup effect for component unmount - prevent memory leaks
   useEffect(() => {
@@ -754,11 +701,8 @@ export default function ChatInput({
         window.clearTimeout(timeoutId);
       });
       timeouts.clear();
-
-      // Clear alerts to prevent memory leaks
-      clearAlerts();
     };
-  }, [clearAlerts]);
+  }, []);
 
   const maxHeight = 10 * 24;
 
@@ -1717,32 +1661,69 @@ export default function ChatInput({
         </div>
       )}
 
-      {/* Bottom action bar. Single flat row; no dividers. Left side: model
-          + working dir. Right side (after spacer): context indicator,
-          extensions, diagnostics, attach, mic, send. When the bar is narrow
-          (e.g. on a small window), the secondary controls drop out so the
-          model selector + send button always stay visible. */}
-      <div ref={bottomBarRef} className="flex flex-row items-center gap-2 px-3 py-2 relative">
-        {/* Left: model selector */}
-        <Tooltip>
-          <div>
-            <ModelsBottomBar
-              sessionId={sessionId}
-              dropdownRef={dropdownRef}
-              setView={setView}
-              sessionModel={effectiveModel}
-              sessionProvider={effectiveProvider}
-              latestInference={latestInference}
-              onModelChanged={setModelOverride}
-              sessionLoaded={sessionLoaded}
-            />
-          </div>
-        </Tooltip>
+      {/* Bottom action bar, two rows; no dividers.
+          Row 1: model, thinking, image model, loop (in a chat).
+          Row 2: attach, working dir, git branch, then (after a spacer) cost,
+          context, extensions, voice, mic, send. Nothing hides on a narrow
+          window; the working dir name is shortened instead. */}
+      <div ref={bottomBarRef} className="flex flex-col gap-1 px-3 py-2 relative">
+        <div className="flex flex-row flex-wrap items-center gap-2">
+          {/* Row 1: model selector (with the thinking picker) */}
+          <Tooltip>
+            <div>
+              <ModelsBottomBar
+                sessionId={sessionId}
+                dropdownRef={dropdownRef}
+                setView={setView}
+                sessionModel={effectiveModel}
+                sessionProvider={effectiveProvider}
+                latestInference={latestInference}
+                onModelChanged={setModelOverride}
+                sessionLoaded={sessionLoaded}
+              />
+            </div>
+          </Tooltip>
 
-        {/* Left: working directory (leaf folder name only) */}
-        {!isBottomBarNarrow && (
+          {/* Row 1: image model (the local image server's, switched through StrataTray) */}
+          <ImageModelPicker isLoading={isLoading} />
+
+          {/* Row 1: loop on/off (the session's /grind goal) */}
+          {sessionId && (
+            <LoopToggle
+              sessionId={sessionId}
+              isLoading={isLoading}
+              onStartIdle={(goal) => handleSubmit({ msg: `/grind ${goal}`, images: [] })}
+            />
+          )}
+        </div>
+
+        <div className="flex flex-row items-center gap-2">
+          {/* Row 2: attach */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                onClick={handleFileSelect}
+                disabled={isFilePickerOpen}
+                variant="ghost"
+                size="sm"
+                shape="round"
+                className={cn(
+                  // -ml-2: the round button pads its icon by 8px; this lines the icon up
+                  // with the model icon on row 1.
+                  '-ml-2 text-text-primary/70 hover:text-text-primary transition-colors',
+                  isFilePickerOpen ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
+                )}
+              >
+                <Attach className="w-4 h-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Attach file</TooltipContent>
+          </Tooltip>
+
+          {/* Row 2: working directory */}
           <DirSwitcher
-            className=""
+            className={cn('min-w-0', isBottomBarNarrow ? 'max-w-[120px]' : 'max-w-[320px]')}
             sessionId={sessionId ?? undefined}
             workingDir={currentWorkingDir}
             onWorkingDirChange={async (newDir) => {
@@ -1750,196 +1731,150 @@ export default function ChatInput({
               setWorkingDirOverride(newDir);
             }}
           />
-        )}
 
-        {!isBottomBarNarrow && currentWorkingDir && (
-          <GitBranchIndicator dir={currentWorkingDir} className="ml-1" />
-        )}
+          {currentWorkingDir && <GitBranchIndicator dir={currentWorkingDir} className="ml-1" />}
 
-        {/* Spacer */}
-        <div className="flex-1" />
+          {/* Spacer */}
+          <div className="flex-1" />
 
-        {!isBottomBarNarrow && (
-          <>
-            {/* Right: cost tracker (when enabled) */}
-            {COST_TRACKING_ENABLED && (
-              <CostTracker
-                inputTokens={accumulatedInputTokens}
-                outputTokens={accumulatedOutputTokens}
-                accumulatedCost={accumulatedCost}
-                model={effectiveModel}
-                provider={effectiveProvider}
-              />
-            )}
-
-            {/* Right: context window indicator */}
-            <ContextWindowIndicator
-              totalTokens={totalTokens || 0}
-              tokenLimit={tokenLimit}
-              alerts={alerts}
+          {/* Row 2 right: cost tracker (when enabled) */}
+          {COST_TRACKING_ENABLED && (
+            <CostTracker
+              inputTokens={accumulatedInputTokens}
+              outputTokens={accumulatedOutputTokens}
+              accumulatedCost={accumulatedCost}
+              model={effectiveModel}
+              provider={effectiveProvider}
             />
+          )}
 
-            {/* Right: extension selector */}
-            <BottomMenuExtensionSelection
-              sessionId={sessionId}
-              nextChatExtensionDraft={nextChatExtensionDraft}
-              onNextChatExtensionDraftChange={onNextChatExtensionDraftChange}
+          {/* Row 2 right: context window indicator (opens the context viewer in a chat) */}
+          <ContextWindowIndicator
+            totalTokens={totalTokens || 0}
+            tokenLimit={tokenLimit}
+            onOpen={sessionId ? () => setContextXrayOpen(true) : undefined}
+          />
+
+          {/* Row 2 right: extension selector */}
+          <BottomMenuExtensionSelection
+            sessionId={sessionId}
+            nextChatExtensionDraft={nextChatExtensionDraft}
+            onNextChatExtensionDraftChange={onNextChatExtensionDraftChange}
+          />
+
+          {liveVoice && (
+            <LiveVoiceButton
+              availability={liveVoice.availability}
+              phase={liveVoice.phase}
+              muted={liveVoice.muted}
+              activeInAnotherSession={liveVoice.activeInAnotherSession}
+              onStart={() => void liveVoice.start()}
+              onStop={() => void liveVoice.stop()}
+              onToggleMute={liveVoice.toggleMute}
+              composerEmpty={
+                displayValue.trim().length === 0 &&
+                pastedImages.length === 0 &&
+                allDroppedFiles.length === 0
+              }
             />
+          )}
 
-            {/* Right: diagnostics */}
-            {sessionId && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    type="button"
-                    onClick={() => {
-                      trackDiagnosticsOpened();
-                      setDiagnosticsOpen(true);
-                    }}
-                    variant="ghost"
-                    size="sm"
-                    shape="round"
-                    className="text-text-primary/70 hover:text-text-primary cursor-pointer transition-colors"
-                  >
-                    <Bug className="w-4 h-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>Generate diagnostics bundle</TooltipContent>
-              </Tooltip>
-            )}
-
-            {/* Right: attach */}
+          {/* Right: mic — ghost icon, no background when idle */}
+          {dictationProvider && (
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
                   type="button"
-                  onClick={handleFileSelect}
-                  disabled={isFilePickerOpen}
                   variant="ghost"
                   size="sm"
                   shape="round"
+                  onClick={() => {
+                    if (!isEnabled) return;
+                    if (isRecording) {
+                      trackVoiceDictation('stop');
+                      stopRecording();
+                    } else {
+                      trackVoiceDictation('start');
+                      startRecording();
+                    }
+                  }}
+                  // Keep the button hoverable when only !isEnabled so the
+                  // "Dictation not configured" tooltip stays reachable.
+                  // We still natively disable while transcribing.
+                  disabled={isTranscribing}
+                  aria-disabled={!isEnabled}
                   className={cn(
-                    'text-text-primary/70 hover:text-text-primary transition-colors',
-                    isFilePickerOpen ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
+                    'transition-colors',
+                    isRecording
+                      ? 'text-red-500 hover:text-red-600'
+                      : 'text-text-primary/70 hover:text-text-primary',
+                    isTranscribing && 'animate-pulse',
+                    !isEnabled && 'opacity-50 cursor-not-allowed'
                   )}
                 >
-                  <Attach className="w-4 h-4" />
+                  <Microphone size={16} />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>Attach file</TooltipContent>
-            </Tooltip>
-          </>
-        )}
-
-        {liveVoice && (
-          <LiveVoiceButton
-            availability={liveVoice.availability}
-            phase={liveVoice.phase}
-            muted={liveVoice.muted}
-            activeInAnotherSession={liveVoice.activeInAnotherSession}
-            onStart={() => void liveVoice.start()}
-            onStop={() => void liveVoice.stop()}
-            onToggleMute={liveVoice.toggleMute}
-            composerEmpty={
-              displayValue.trim().length === 0 &&
-              pastedImages.length === 0 &&
-              allDroppedFiles.length === 0
-            }
-          />
-        )}
-
-        {/* Right: mic — ghost icon, no background when idle */}
-        {dictationProvider && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                shape="round"
-                onClick={() => {
-                  if (!isEnabled) return;
-                  if (isRecording) {
-                    trackVoiceDictation('stop');
-                    stopRecording();
-                  } else {
-                    trackVoiceDictation('start');
-                    startRecording();
-                  }
-                }}
-                // Keep the button hoverable when only !isEnabled so the
-                // "Dictation not configured" tooltip stays reachable.
-                // We still natively disable while transcribing.
-                disabled={isTranscribing}
-                aria-disabled={!isEnabled}
-                className={cn(
-                  'transition-colors',
-                  isRecording
-                    ? 'text-red-500 hover:text-red-600'
-                    : 'text-text-primary/70 hover:text-text-primary',
-                  isTranscribing && 'animate-pulse',
-                  !isEnabled && 'opacity-50 cursor-not-allowed'
+              <TooltipContent>
+                {!isEnabled ? (
+                  <p>Dictation not configured (Settings)</p>
+                ) : (
+                  <p>Voice dictation{isRecording ? '' : ' • Say "submit" to send'}</p>
                 )}
-              >
-                <Microphone size={16} />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>
-              {!isEnabled ? (
-                <p>Dictation not configured (Settings)</p>
-              ) : (
-                <p>Voice dictation{isRecording ? '' : ' • Say "submit" to send'}</p>
-              )}
-            </TooltipContent>
-          </Tooltip>
-        )}
+              </TooltipContent>
+            </Tooltip>
+          )}
 
-        {/* Right: send / stop — soft gray circle with up-arrow */}
-        {isLoading && !hasSubmittableContent ? (
-          <Button
-            type="button"
-            onClick={handleStop}
-            size="sm"
-            shape="round"
-            variant="ghost"
-            aria-label="Stop"
-            className="bg-background-tertiary text-text-primary hover:bg-background-tertiary/70"
-          >
-            <Stop />
-          </Button>
-        ) : (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span>
-                <Button
-                  type="button"
-                  size="sm"
-                  shape="round"
-                  variant="ghost"
-                  disabled={isSubmitButtonDisabled}
-                  aria-label={intl.formatMessage(i18n.send)}
-                  onClick={onFormSubmit}
-                  className={cn(
-                    'bg-background-tertiary',
-                    isSubmitButtonDisabled
-                      ? 'text-text-secondary cursor-not-allowed opacity-60'
-                      : 'text-text-primary hover:bg-background-tertiary/70 hover:cursor-pointer'
-                  )}
-                >
-                  <ArrowUp className="w-4 h-4" strokeWidth={2.25} />
-                </Button>
-              </span>
-            </TooltipTrigger>
-            <TooltipContent>
-              <p>{getSubmitButtonTooltip()}</p>
-            </TooltipContent>
-          </Tooltip>
-        )}
-        {sessionId && diagnosticsOpen && (
-          <DiagnosticsModal
-            isOpen={diagnosticsOpen}
-            onClose={() => setDiagnosticsOpen(false)}
+          {/* Right: send / stop — soft gray circle with up-arrow */}
+          {isLoading && !hasSubmittableContent ? (
+            <Button
+              type="button"
+              onClick={handleStop}
+              size="sm"
+              shape="round"
+              variant="ghost"
+              aria-label="Stop"
+              className="bg-background-tertiary text-text-primary hover:bg-background-tertiary/70"
+            >
+              <Stop />
+            </Button>
+          ) : (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span>
+                  <Button
+                    type="button"
+                    size="sm"
+                    shape="round"
+                    variant="ghost"
+                    disabled={isSubmitButtonDisabled}
+                    aria-label={intl.formatMessage(i18n.send)}
+                    onClick={onFormSubmit}
+                    className={cn(
+                      'bg-background-tertiary',
+                      isSubmitButtonDisabled
+                        ? 'text-text-secondary cursor-not-allowed opacity-60'
+                        : 'text-text-primary hover:bg-background-tertiary/70 hover:cursor-pointer'
+                    )}
+                  >
+                    <ArrowUp className="w-4 h-4" strokeWidth={2.25} />
+                  </Button>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>{getSubmitButtonTooltip()}</p>
+              </TooltipContent>
+            </Tooltip>
+          )}
+        </div>
+        {sessionId && (
+          <ContextXrayDialog
+            open={contextXrayOpen}
+            onOpenChange={setContextXrayOpen}
             sessionId={sessionId}
+            totalTokens={totalTokens || 0}
+            onCompact={() => handleSubmit({ msg: MANUAL_COMPACT_TRIGGER, images: [] })}
+            compactDisabled={!totalTokens || isLoading}
           />
         )}
         <MentionPopover

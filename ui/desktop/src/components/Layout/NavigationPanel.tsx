@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router';
-import { AudioLines, ChevronDown, ChevronRight } from 'lucide-react';
+import { AudioLines, ChevronDown, ChevronRight, Trash2 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useNavigationContext } from './NavigationContext';
 import { useConfig } from '../ConfigContext';
@@ -20,6 +20,10 @@ import { formatMessageTimestamp } from '../../utils/timeUtils';
 import { cn } from '../../utils';
 import type { ProjectGroup } from '../../utils/projectSessions';
 import { defineMessages, useIntl } from '../../i18n';
+import { toast } from 'react-toastify';
+import { ConfirmationModal } from '../ui/ConfirmationModal';
+import { deleteSessionWithCleanup } from '../../acp/deleteSessionWithCleanup';
+import { errorMessage } from '../../utils/conversionUtils';
 
 type StreamState = 'idle' | 'loading' | 'streaming' | 'error';
 
@@ -44,6 +48,30 @@ const i18n = defineMessages({
   untitledSession: {
     id: 'navigationPanel.untitledSession',
     defaultMessage: 'Untitled session',
+  },
+  deleteChat: {
+    id: 'navigationPanel.deleteChat',
+    defaultMessage: 'Delete chat',
+  },
+  deleteTitle: {
+    id: 'navigationPanel.delete.title',
+    defaultMessage: 'Delete chat',
+  },
+  deleteMessage: {
+    id: 'navigationPanel.delete.message',
+    defaultMessage: 'Delete "{name}"? This cannot be undone.',
+  },
+  deleteCancel: {
+    id: 'navigationPanel.delete.cancel',
+    defaultMessage: 'Cancel',
+  },
+  deleteSuccess: {
+    id: 'navigationPanel.delete.success',
+    defaultMessage: 'Chat deleted',
+  },
+  deleteFailed: {
+    id: 'navigationPanel.delete.failed',
+    defaultMessage: 'Could not delete {name}: {error}',
   },
   metaModel: {
     id: 'navigationPanel.metaModel',
@@ -180,6 +208,7 @@ const SessionRow: React.FC<SessionRowProps> = ({
   const intl = useIntl();
   const [isEditing, setIsEditing] = useState(false);
   const [tooltipOpen, setTooltipOpen] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const isStreaming = status?.streamState === 'streaming';
   const hasError = status?.streamState === 'error';
   const hasUnread = status?.hasUnreadActivity ?? false;
@@ -192,49 +221,95 @@ const SessionRow: React.FC<SessionRowProps> = ({
         ? intl.formatMessage(i18n.statusUnread)
         : intl.formatMessage(i18n.statusIdle);
 
+  // The lists refresh themselves off the SESSION_DELETED event that the delete dispatches.
+  const handleDelete = async () => {
+    setConfirmingDelete(false);
+    const name = session.name || intl.formatMessage(i18n.untitledSession);
+    try {
+      await deleteSessionWithCleanup(session.id);
+      toast.success(intl.formatMessage(i18n.deleteSuccess));
+    } catch (error) {
+      toast.error(
+        intl.formatMessage(i18n.deleteFailed, {
+          name,
+          error: errorMessage(error, 'Unknown error'),
+        })
+      );
+    }
+  };
+
   return (
-    <Tooltip open={tooltipOpen && !isEditing} onOpenChange={setTooltipOpen} delayDuration={400}>
-      <TooltipTrigger asChild>
-        <div
-          onClick={() => !isEditing && onClick()}
-          className={cn(
-            'flex items-center gap-2 px-3 py-1.5 rounded-full cursor-pointer text-sm',
-            'hover:bg-background-tertiary/60 transition-colors',
-            active && 'bg-background-tertiary'
-          )}
-        >
-          <InlineEditText
-            value={session.name}
-            onSave={async (newName) => {
-              await acpRenameSession(session.id, newName);
-              window.dispatchEvent(
-                new CustomEvent(AppEvents.SESSION_RENAMED, {
-                  detail: { sessionId: session.id, newName, userInitiated: true },
-                })
-              );
-              onRenamed();
-            }}
-            placeholder={intl.formatMessage(i18n.untitledSession)}
-            disabled={isStreaming}
-            singleClickEdit={false}
-            className="truncate text-text-primary flex-1 !px-0 !py-0 hover:bg-transparent"
-            editClassName="!text-sm"
-            onEditStart={() => setIsEditing(true)}
-            onEditEnd={() => setIsEditing(false)}
-          />
-          {isLiveVoiceActive && (
-            <AudioLines
-              className="w-3.5 h-3.5 flex-shrink-0 text-blue-500"
-              aria-label={intl.formatMessage(i18n.returnToActiveLiveVoice)}
+    <>
+      <Tooltip open={tooltipOpen && !isEditing} onOpenChange={setTooltipOpen} delayDuration={400}>
+        <TooltipTrigger asChild>
+          <div
+            onClick={() => !isEditing && onClick()}
+            className={cn(
+              'group flex items-center gap-2 px-3 py-1.5 rounded-full cursor-pointer text-sm',
+              'hover:bg-background-tertiary/60 transition-colors',
+              active && 'bg-background-tertiary'
+            )}
+          >
+            <InlineEditText
+              value={session.name}
+              onSave={async (newName) => {
+                await acpRenameSession(session.id, newName);
+                window.dispatchEvent(
+                  new CustomEvent(AppEvents.SESSION_RENAMED, {
+                    detail: { sessionId: session.id, newName, userInitiated: true },
+                  })
+                );
+                onRenamed();
+              }}
+              placeholder={intl.formatMessage(i18n.untitledSession)}
+              disabled={isStreaming}
+              singleClickEdit={false}
+              className="truncate text-text-primary flex-1 !px-0 !py-0 hover:bg-transparent"
+              editClassName="!text-sm"
+              onEditStart={() => setIsEditing(true)}
+              onEditEnd={() => setIsEditing(false)}
             />
-          )}
-          <SessionIndicators isStreaming={isStreaming} hasUnread={hasUnread} hasError={hasError} />
-        </div>
-      </TooltipTrigger>
-      <TooltipContent side="right" align="start" className="max-w-xs text-left">
-        <SessionTooltipContent session={session} statusLabel={statusLabel} />
-      </TooltipContent>
-    </Tooltip>
+            {isLiveVoiceActive && (
+              <AudioLines
+                className="w-3.5 h-3.5 flex-shrink-0 text-blue-500"
+                aria-label={intl.formatMessage(i18n.returnToActiveLiveVoice)}
+              />
+            )}
+            <SessionIndicators
+              isStreaming={isStreaming}
+              hasUnread={hasUnread}
+              hasError={hasError}
+            />
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setConfirmingDelete(true);
+              }}
+              className="flex-shrink-0 p-1 rounded opacity-0 group-hover:opacity-100 focus:opacity-100 hover:bg-red-500/10 transition-opacity cursor-pointer"
+              title={intl.formatMessage(i18n.deleteChat)}
+              aria-label={intl.formatMessage(i18n.deleteChat)}
+            >
+              <Trash2 className="w-3 h-3 text-text-secondary hover:text-red-500" />
+            </button>
+          </div>
+        </TooltipTrigger>
+        <TooltipContent side="right" align="start" className="max-w-xs text-left">
+          <SessionTooltipContent session={session} statusLabel={statusLabel} />
+        </TooltipContent>
+      </Tooltip>
+      <ConfirmationModal
+        isOpen={confirmingDelete}
+        title={intl.formatMessage(i18n.deleteTitle)}
+        message={intl.formatMessage(i18n.deleteMessage, {
+          name: session.name || intl.formatMessage(i18n.untitledSession),
+        })}
+        confirmLabel={intl.formatMessage(i18n.deleteTitle)}
+        cancelLabel={intl.formatMessage(i18n.deleteCancel)}
+        confirmVariant="destructive"
+        onConfirm={handleDelete}
+        onCancel={() => setConfirmingDelete(false)}
+      />
+    </>
   );
 };
 

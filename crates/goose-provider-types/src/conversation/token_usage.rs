@@ -102,11 +102,11 @@ impl ProviderUsage {
 pub struct Usage {
     /// All prompt tokens, including any served from or written to cache.
     /// `cache_read_input_tokens` and `cache_write_input_tokens` are subsets of this.
-    pub input_tokens: Option<i32>,
-    pub output_tokens: Option<i32>,
-    pub total_tokens: Option<i32>,
-    pub cache_read_input_tokens: Option<i32>,
-    pub cache_write_input_tokens: Option<i32>,
+    pub input_tokens: Option<i64>,
+    pub output_tokens: Option<i64>,
+    pub total_tokens: Option<i64>,
+    pub cache_read_input_tokens: Option<i64>,
+    pub cache_write_input_tokens: Option<i64>,
 }
 
 fn sum_optionals<T>(a: Option<T>, b: Option<T>) -> Option<T>
@@ -148,9 +148,9 @@ impl AddAssign for Usage {
 
 impl Usage {
     pub fn new(
-        input_tokens: Option<i32>,
-        output_tokens: Option<i32>,
-        total_tokens: Option<i32>,
+        input_tokens: Option<i64>,
+        output_tokens: Option<i64>,
+        total_tokens: Option<i64>,
     ) -> Self {
         let calculated_total = if total_tokens.is_none() {
             match (input_tokens, output_tokens) {
@@ -174,8 +174,8 @@ impl Usage {
 
     pub fn with_cache_tokens(
         mut self,
-        cache_read_input_tokens: Option<i32>,
-        cache_write_input_tokens: Option<i32>,
+        cache_read_input_tokens: Option<i64>,
+        cache_write_input_tokens: Option<i64>,
     ) -> Self {
         self.cache_read_input_tokens = cache_read_input_tokens;
         self.cache_write_input_tokens = cache_write_input_tokens;
@@ -185,11 +185,11 @@ impl Usage {
     /// For providers whose reported `input_tokens`/`total_tokens` exclude
     /// cache tokens (e.g. Anthropic): folds the cache breakdown in.
     pub fn from_cache_exclusive_input(
-        input_tokens: Option<i32>,
-        output_tokens: Option<i32>,
-        total_tokens: Option<i32>,
-        cache_read_input_tokens: Option<i32>,
-        cache_write_input_tokens: Option<i32>,
+        input_tokens: Option<i64>,
+        output_tokens: Option<i64>,
+        total_tokens: Option<i64>,
+        cache_read_input_tokens: Option<i64>,
+        cache_write_input_tokens: Option<i64>,
     ) -> Self {
         let cache_tokens = cache_read_input_tokens
             .unwrap_or(0)

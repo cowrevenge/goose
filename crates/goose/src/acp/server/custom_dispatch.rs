@@ -2,7 +2,7 @@ use super::*;
 use goose_acp_macros::custom_methods;
 
 #[custom_methods]
-impl GooseAcpAgent {
+impl AcpConnection {
     pub async fn dispatch_custom_request(
         self: &Arc<Self>,
         cx: &ConnectionTo<Client>,
@@ -165,6 +165,14 @@ impl GooseAcpAgent {
         req: DiagnosticsGetRequest,
     ) -> Result<DiagnosticsGetResponse, agent_client_protocol::Error> {
         self.on_get_diagnostics(req).await
+    }
+
+    #[custom_method(ContextReportRequest)]
+    async fn dispatch_get_context_report(
+        &self,
+        req: ContextReportRequest,
+    ) -> Result<ContextReportResponse, agent_client_protocol::Error> {
+        self.on_get_context_report(req).await
     }
 
     #[custom_method(ListPromptsRequest)]
@@ -684,6 +692,47 @@ impl GooseAcpAgent {
         req: RenameSessionRequest,
     ) -> Result<EmptyResponse, agent_client_protocol::Error> {
         self.on_rename_session(req).await
+    }
+
+    #[custom_method(SetSessionGrindRequest)]
+    async fn dispatch_set_session_grind(
+        &self,
+        req: SetSessionGrindRequest,
+    ) -> Result<EmptyResponse, agent_client_protocol::Error> {
+        self.on_set_session_grind(req).await
+    }
+
+    #[custom_method(ImageModelsRequest)]
+    async fn dispatch_image_models(
+        &self,
+        _req: ImageModelsRequest,
+    ) -> Result<ImageModelsResponse, agent_client_protocol::Error> {
+        use crate::agents::platform_extensions::developer::generate;
+        Ok(
+            match generate::list_image_models(&generate::image_switch_url()).await {
+                Ok(list) => ImageModelsResponse {
+                    current: list.current,
+                    models: list.models,
+                    error: None,
+                },
+                Err(error) => ImageModelsResponse {
+                    error: Some(error),
+                    ..Default::default()
+                },
+            },
+        )
+    }
+
+    #[custom_method(SwitchImageModelRequest)]
+    async fn dispatch_switch_image_model(
+        &self,
+        req: SwitchImageModelRequest,
+    ) -> Result<EmptyResponse, agent_client_protocol::Error> {
+        use crate::agents::platform_extensions::developer::generate;
+        generate::switch_image_model(&generate::image_switch_url(), req.model.trim(), true)
+            .await
+            .map_err(|error| agent_client_protocol::Error::internal_error().data(error))?;
+        Ok(EmptyResponse {})
     }
 
     #[custom_method(ArchiveSessionRequest)]

@@ -171,6 +171,9 @@ struct StreamingChunk {
     id: Option<String>,
     usage: Option<Value>,
     model: Option<String>,
+    /// Strata: `<tool_call>` blocks for tools the request did not declare, which it returned as text.
+    #[serde(default)]
+    strata_rejected_tool_calls: Option<Value>,
 }
 
 fn extract_content_and_signature(
@@ -245,6 +248,7 @@ pub fn format_messages_with_options(
     options: OpenAiFormatOptions,
 ) -> Vec<Value> {
     let mut messages_spec = Vec::new();
+    let mut tool_image_messages = Vec::new();
     let mut pending_assistant_reasoning = String::new();
     // Reasoning to propagate across consecutive tool-call messages in the same turn.
     // DeepSeek/Kimi require reasoning_content on every assistant tool-call message.
@@ -287,9 +291,7 @@ pub fn format_messages_with_options(
         };
 
         let mut output = Vec::new();
-        // Deferred to the end of the message so every tool result in a batch stays
-        // consecutive; a strict OpenAI-compatible API rejects a request where a
-        // synthetic user image message splits one assistant tool_calls batch.
+        // Keep attachment provenance until split assistant calls are consolidated.
         let mut pending_image_messages = Vec::new();
         let mut content_array = Vec::new();
         let mut has_non_text_content = false;
@@ -482,6 +484,7 @@ pub fn format_messages_with_options(
             }
         }
 
+        let image_count = pending_image_messages.len();
         output.append(&mut pending_image_messages);
 
         if !content_array.is_empty() {
@@ -546,12 +549,16 @@ pub fn format_messages_with_options(
             output.insert(0, converted);
         }
 
-        messages_spec.extend(output.into_iter().map(|message| {
-            serde_json::to_value(message).expect("OpenAI message fields are JSON serializable")
-        }));
+        let image_start = output.len() - image_count;
+        for (index, message) in output.into_iter().enumerate() {
+            messages_spec.push(
+                serde_json::to_value(message).expect("OpenAI message fields are JSON serializable"),
+            );
+            tool_image_messages.push(index >= image_start);
+        }
     }
 
-    merge_split_tool_call_messages(&mut messages_spec);
+    merge_split_tool_call_messages(&mut messages_spec, &mut tool_image_messages);
 
     if let Some(format) = options.thinking_preservation_format {
         inline_reasoning_content(&mut messages_spec, format);
@@ -596,7 +603,7 @@ fn inline_reasoning_content(messages: &mut [Value], format: ThinkingPreservation
 ///
 /// Only merges when `reasoning_content` is present and matches, since that is
 /// the only signal that messages were split from the same turn.
-fn merge_split_tool_call_messages(messages: &mut Vec<Value>) {
+fn merge_split_tool_call_messages(messages: &mut Vec<Value>, tool_images: &mut Vec<bool>) {
     let mut i = 0;
     while i < messages.len() {
         let is_assistant_tool_call = messages[i].get("role") == Some(&json!("assistant"))
@@ -614,6 +621,7 @@ fn merge_split_tool_call_messages(messages: &mut Vec<Value>) {
 
         let mut extra_tool_calls: Vec<Value> = Vec::new();
         let mut collected: Vec<Value> = Vec::new();
+        let mut collected_images = Vec::new();
         let mut scan = i + 1;
 
         loop {
@@ -621,10 +629,10 @@ fn merge_split_tool_call_messages(messages: &mut Vec<Value>) {
                 break;
             }
 
-            // Skip past tool result and any image-only user messages that
-            // format_messages inserts after tool results containing images.
+            // Only formatter-generated attachments belong to this tool result;
+            // an actual user image starts a new turn, even with identical reasoning.
             let mut peek = scan + 1;
-            while peek < messages.len() && is_image_only_user_message(&messages[peek]) {
+            while peek < messages.len() && tool_images[peek] {
                 peek += 1;
             }
 
@@ -650,6 +658,7 @@ fn merge_split_tool_call_messages(messages: &mut Vec<Value>) {
             }
 
             collected.extend(messages[scan..peek].iter().cloned());
+            collected_images.extend_from_slice(&tool_images[scan..peek]);
             if let Some(tc) = messages[peek]
                 .get("tool_calls")
                 .and_then(|tc| tc.as_array())
@@ -673,6 +682,7 @@ fn merge_split_tool_call_messages(messages: &mut Vec<Value>) {
 
         let insert_at = i + 1;
         messages.drain(insert_at..scan);
+        tool_images.splice(insert_at..scan, collected_images);
         let num_collected = collected.len();
         for (j, msg) in collected.into_iter().enumerate() {
             messages.insert(insert_at + j, msg);
@@ -680,20 +690,46 @@ fn merge_split_tool_call_messages(messages: &mut Vec<Value>) {
 
         i = insert_at + num_collected;
     }
+    defer_tool_images(messages, tool_images);
 }
 
-/// True if `msg` is a synthetic image-only user message (content is exclusively image_url items).
-fn is_image_only_user_message(msg: &Value) -> bool {
-    msg.get("role") == Some(&json!("user"))
-        && msg
-            .get("content")
-            .and_then(|c| c.as_array())
-            .is_some_and(|arr| {
-                !arr.is_empty()
-                    && arr
+fn defer_tool_images(messages: &mut Vec<Value>, tool_images: &[bool]) {
+    if !tool_images.iter().any(|is_tool_image| *is_tool_image) {
+        return;
+    }
+    let mut output = Vec::with_capacity(messages.len());
+    let mut pending_calls = std::collections::HashSet::new();
+    let mut pending_images = Vec::new();
+
+    for (message, is_tool_image) in messages.drain(..).zip(tool_images) {
+        if *is_tool_image && !pending_calls.is_empty() {
+            pending_images.push(message);
+            continue;
+        }
+
+        if message["role"] == "tool" {
+            if let Some(id) = message["tool_call_id"].as_str() {
+                pending_calls.remove(id);
+            }
+        } else {
+            output.append(&mut pending_images);
+            pending_calls.clear();
+            if let Some(calls) = message["tool_calls"].as_array() {
+                pending_calls.extend(
+                    calls
                         .iter()
-                        .all(|item| item.get("type") == Some(&json!("image_url")))
-            })
+                        .filter_map(|call| call["id"].as_str().map(str::to_owned)),
+                );
+            }
+        }
+
+        output.push(message);
+        if pending_calls.is_empty() {
+            output.append(&mut pending_images);
+        }
+    }
+    output.append(&mut pending_images);
+    *messages = output;
 }
 
 pub fn format_tools(tools: &[Tool]) -> anyhow::Result<Vec<Value>> {
@@ -739,6 +775,38 @@ pub fn record_response_metadata(usage: &mut ProviderUsage, response: &Value) {
 }
 
 /// Convert OpenAI's API response to internal Message format
+/// Strata (and servers like it) return a `<tool_call>` for a tool the request did not declare as plain
+/// text and list it in `strata_rejected_tool_calls`. Left as text, the turn reads as a final answer and the
+/// agent stops; surfaced as a failed tool request, the model gets the error back and retries.
+fn rejected_tool_call_errors(
+    rejected: Option<&Value>,
+    id_prefix: &str,
+) -> Vec<MessageContentBlock> {
+    let Some(entries) = rejected.and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    entries
+        .iter()
+        .enumerate()
+        .map(|(i, entry)| {
+            let name = entry
+                .get("name")
+                .and_then(Value::as_str)
+                .filter(|n| !n.is_empty())
+                .unwrap_or("<unnamed>");
+            let error = ErrorData {
+                code: ErrorCode::INVALID_REQUEST,
+                message: Cow::from(format!(
+                    "There is no tool named '{name}', so nothing ran: the call came back as plain text. \
+                     Call one of the tools you were given, using its exact name."
+                )),
+                data: None,
+            };
+            MessageContentBlock::tool_request(format!("{id_prefix}_rejected_{i}"), Err(error))
+        })
+        .collect()
+}
+
 pub fn response_to_message(response: &Value) -> anyhow::Result<Message> {
     let output_token_limit_reached = response
         .pointer("/choices/0/finish_reason")
@@ -899,6 +967,15 @@ pub fn response_to_message(response: &Value) -> anyhow::Result<Message> {
         }
     }
 
+    let id_prefix = response
+        .get("id")
+        .and_then(Value::as_str)
+        .unwrap_or("strata");
+    content.extend(rejected_tool_call_errors(
+        response.get("strata_rejected_tool_calls"),
+        id_prefix,
+    ));
+
     let mut message = Message::new(Role::Assistant, chrono::Utc::now().timestamp(), content);
     message.metadata.output_token_limit_reached = output_token_limit_reached;
     Ok(message)
@@ -918,14 +995,12 @@ pub fn get_usage(usage: &Value) -> Usage {
     let input_tokens = usage
         .get("prompt_tokens")
         .and_then(|v| v.as_i64())
-        .or_else(|| usage.get("prompt_eval_count").and_then(|v| v.as_i64()))
-        .map(|v| v as i32);
+        .or_else(|| usage.get("prompt_eval_count").and_then(|v| v.as_i64()));
 
     let output_tokens = usage
         .get("completion_tokens")
         .and_then(|v| v.as_i64())
-        .or_else(|| usage.get("eval_count").and_then(|v| v.as_i64()))
-        .map(|v| v as i32);
+        .or_else(|| usage.get("eval_count").and_then(|v| v.as_i64()));
 
     let cache_read_input_tokens = usage
         .get("cache_read_input_tokens")
@@ -935,8 +1010,7 @@ pub fn get_usage(usage: &Value) -> Usage {
                 .get("prompt_tokens_details")
                 .and_then(|d| d.get("cached_tokens"))
                 .and_then(|v| v.as_i64())
-        })
-        .map(|v| v as i32);
+        });
 
     let cache_write_input_tokens = usage
         .get("cache_creation_input_tokens")
@@ -946,13 +1020,11 @@ pub fn get_usage(usage: &Value) -> Usage {
                 .get("prompt_tokens_details")
                 .and_then(|d| d.get("cache_write_tokens"))
                 .and_then(|v| v.as_i64())
-        })
-        .map(|v| v as i32);
+        });
 
     let total_tokens = usage
         .get("total_tokens")
         .and_then(|v| v.as_i64())
-        .map(|v| v as i32)
         .or_else(|| match (input_tokens, output_tokens) {
             (Some(input), Some(output)) => Some(input.saturating_add(output)),
             _ => None,
@@ -1289,6 +1361,7 @@ where
         let mut output_token_limit_reached = false;
         let mut output_token_limit_metadata_emitted = false;
         let mut usage_emitted = false;
+        let mut rejected_tool_calls: Vec<Value> = Vec::new();
 
         'outer: while let Some(response) = stream.next().await {
             let response_str = response?;
@@ -1312,6 +1385,9 @@ where
             }
             if let Some(id) = &chunk.id {
                 last_response_id = Some(id.clone());
+            }
+            if let Some(Value::Array(entries)) = &chunk.strata_rejected_tool_calls {
+                rejected_tool_calls.extend(entries.iter().cloned());
             }
 
             if !chunk.choices.is_empty() {
@@ -1382,6 +1458,9 @@ where
                                 }
                                 if let Some(id) = &tool_chunk.id {
                                     last_response_id = Some(id.clone());
+                                }
+                                if let Some(Value::Array(entries)) = &tool_chunk.strata_rejected_tool_calls {
+                                    rejected_tool_calls.extend(entries.iter().cloned());
                                 }
                                 if let Some(reason) = tool_chunk.choices.first().and_then(|c| c.finish_reason.clone()) {
                                     last_finish_reason = Some(reason);
@@ -1678,6 +1757,20 @@ where
             yield (Some(message), None)
         }
 
+        if !rejected_tool_calls.is_empty() {
+            let rejected = Value::Array(std::mem::take(&mut rejected_tool_calls));
+            let id_prefix = last_response_id.clone().unwrap_or_else(|| "strata".to_string());
+            let mut message = Message::new(
+                Role::Assistant,
+                chrono::Utc::now().timestamp(),
+                rejected_tool_call_errors(Some(&rejected), &id_prefix),
+            );
+            if let Some(id) = last_response_id.clone() {
+                message = message.with_id(id);
+            }
+            yield (Some(message), None)
+        }
+
         if output_token_limit_reached && !output_token_limit_metadata_emitted {
             yield (Some(output_token_limit_marker(last_response_id.clone())), None)
         }
@@ -1940,19 +2033,36 @@ pub fn openai_reasoning_effort_for_thinking(
         .as_ref()
         .and_then(|model| model.reasoning_efforts.as_deref());
 
-    let preferred: &[&str] = match effort {
-        ThinkingEffort::Off => &["none", "minimal", "low"],
-        ThinkingEffort::Low => &["low", "minimal", "medium", "high", "xhigh"],
-        ThinkingEffort::Medium => &["medium", "high", "low", "xhigh"],
-        ThinkingEffort::High => &["high", "medium", "xhigh", "low"],
-        ThinkingEffort::Max => &["max", "xhigh", "high", "medium", "low"],
-    };
-
-    preferred
+    preferred_reasoning_levels(effort)
         .iter()
         .find(|level| match catalog_efforts {
             Some(values) => values.iter().any(|value| value == **level),
             None => openai_reasoning_efforts_for_model(model_name).contains(level),
+        })
+        .map(|level| (*level).to_string())
+}
+
+/// The `reasoning_effort` words a thinking level may be sent as, closest first.
+fn preferred_reasoning_levels(effort: ThinkingEffort) -> &'static [&'static str] {
+    match effort {
+        ThinkingEffort::Off => &["none", "minimal", "low"],
+        ThinkingEffort::Low => &["low", "minimal", "medium", "high", "xhigh"],
+        ThinkingEffort::Medium => &["medium", "high", "low", "xhigh"],
+        ThinkingEffort::High => &["high", "xhigh", "medium", "low"],
+        ThinkingEffort::Max => &["max", "xhigh", "high", "medium", "low"],
+    }
+}
+
+/// A thinking level as the closest of the levels a model declares it accepts
+/// (`ModelInfo::reasoning_efforts`), for a server outside the provider catalog. `None` when the
+/// model accepts none of the candidates for that level.
+pub fn reasoning_effort_from_levels(effort: ThinkingEffort, levels: &[String]) -> Option<String> {
+    preferred_reasoning_levels(effort)
+        .iter()
+        .find(|level| {
+            levels
+                .iter()
+                .any(|accepted| accepted.eq_ignore_ascii_case(level))
         })
         .map(|level| (*level).to_string())
 }
@@ -3686,9 +3796,9 @@ mod tests {
 
     fn assert_usage_yielded_once(
         result: &StreamingUsageTestResult,
-        expected_input: i32,
-        expected_output: i32,
-        expected_total: i32,
+        expected_input: i64,
+        expected_output: i64,
+        expected_total: i64,
     ) {
         assert_eq!(
             result.usage_count, 1,
@@ -3721,6 +3831,71 @@ mod tests {
             }
         }
         requests
+    }
+
+    fn assert_rejected_tool_error(request: &crate::conversation::message::ToolRequest, name: &str) {
+        match &request.tool_call {
+            Err(ErrorData {
+                code: ErrorCode::INVALID_REQUEST,
+                message,
+                ..
+            }) => {
+                assert!(
+                    message.contains(&format!("no tool named '{name}'")),
+                    "{message}"
+                );
+            }
+            other => panic!("expected an invalid-request error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_response_to_message_surfaces_strata_rejected_tool_calls() -> anyhow::Result<()> {
+        let response = json!({
+            "id": "chatcmpl-rej",
+            "choices": [{"index": 0, "finish_reason": "stop", "message": {"role": "assistant",
+                "content": "<tool_call>\n<function=shell__dummy>\n<parameter=command>\nplaceholder\n</parameter>\n</function>\n</tool_call>"}}],
+            "strata_rejected_tool_calls": [{"name": "shell__dummy", "reason": "undeclared"}]
+        });
+        let message = response_to_message(&response)?;
+        let requests: Vec<_> = message
+            .content
+            .iter()
+            .filter_map(|c| match c {
+                MessageContentBlock::ToolRequest(r) => Some(r),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].id, "chatcmpl-rej_rejected_0");
+        assert_rejected_tool_error(requests[0], "shell__dummy");
+        Ok(())
+    }
+
+    #[test]
+    fn test_response_to_message_without_rejected_tool_calls_is_unchanged() -> anyhow::Result<()> {
+        let response = json!({"choices": [{"index": 0, "finish_reason": "stop",
+            "message": {"role": "assistant", "content": "done"}}]});
+        let message = response_to_message(&response)?;
+        assert!(message
+            .content
+            .iter()
+            .all(|c| !matches!(c, MessageContentBlock::ToolRequest(_))));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_streaming_surfaces_strata_rejected_tool_calls() {
+        let response_lines = concat!(
+            r#"data: {"id":"chatcmpl-rej","model":"m","choices":[{"index":0,"delta":{"role":"assistant","content":"<tool_call><function=shell__dummy></function></tool_call>"},"finish_reason":null}]}"#,
+            "\n",
+            r#"data: {"id":"chatcmpl-rej","model":"m","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"strata_rejected_tool_calls":[{"name":"shell__dummy","reason":"undeclared"}]}"#,
+            "\n",
+            "data: [DONE]\n",
+        );
+        let requests = collect_streamed_tool_requests(response_lines).await;
+        assert_eq!(requests.len(), 1);
+        assert_rejected_tool_error(&requests[0], "shell__dummy");
     }
 
     #[tokio::test]
@@ -4943,7 +5118,8 @@ data: [DONE]"#;
             json!({"role": "assistant", "tool_calls": [{"id": "tc2", "type": "function", "function": {"name": "write", "arguments": "{}"}}], "reasoning_content": "thinking..."}),
             json!({"role": "tool", "tool_call_id": "tc2", "content": "result2"}),
         ];
-        merge_split_tool_call_messages(&mut messages);
+        let mut tool_images = vec![false; messages.len()];
+        merge_split_tool_call_messages(&mut messages, &mut tool_images);
 
         assert_eq!(messages.len(), 3);
         assert_eq!(messages[0]["tool_calls"].as_array().unwrap().len(), 2);
@@ -4959,7 +5135,8 @@ data: [DONE]"#;
             json!({"role": "assistant", "tool_calls": [{"id": "tc2", "type": "function", "function": {"name": "write", "arguments": "{}"}}]}),
             json!({"role": "tool", "tool_call_id": "tc2", "content": "result2"}),
         ];
-        merge_split_tool_call_messages(&mut messages);
+        let mut tool_images = vec![false; messages.len()];
+        merge_split_tool_call_messages(&mut messages, &mut tool_images);
 
         assert_eq!(messages.len(), 4);
         assert_eq!(messages[0]["tool_calls"].as_array().unwrap().len(), 1);
@@ -4975,16 +5152,17 @@ data: [DONE]"#;
             json!({"role": "assistant", "tool_calls": [{"id": "tc2", "type": "function", "function": {"name": "click", "arguments": "{}"}}], "reasoning_content": "thinking..."}),
             json!({"role": "tool", "tool_call_id": "tc2", "content": "clicked"}),
         ];
-        merge_split_tool_call_messages(&mut messages);
+        let mut tool_images = vec![false, false, true, false, false];
+        merge_split_tool_call_messages(&mut messages, &mut tool_images);
 
         assert_eq!(messages.len(), 4);
         assert_eq!(messages[0]["tool_calls"].as_array().unwrap().len(), 2);
         assert_eq!(messages[0]["role"], "assistant");
         assert_eq!(messages[1]["role"], "tool");
         assert_eq!(messages[1]["tool_call_id"], "tc1");
-        assert_eq!(messages[2]["role"], "user");
-        assert_eq!(messages[3]["role"], "tool");
-        assert_eq!(messages[3]["tool_call_id"], "tc2");
+        assert_eq!(messages[2]["role"], "tool");
+        assert_eq!(messages[2]["tool_call_id"], "tc2");
+        assert_eq!(messages[3]["role"], "user");
     }
 
     #[test]
@@ -4996,7 +5174,8 @@ data: [DONE]"#;
             json!({"role": "assistant", "tool_calls": [{"id": "tc2", "type": "function", "function": {"name": "write", "arguments": "{}"}}], "reasoning_content": "thinking..."}),
             json!({"role": "tool", "tool_call_id": "tc2", "content": "result2"}),
         ];
-        merge_split_tool_call_messages(&mut messages);
+        let mut tool_images = vec![false; messages.len()];
+        merge_split_tool_call_messages(&mut messages, &mut tool_images);
 
         assert_eq!(messages.len(), 5);
         assert_eq!(messages[0]["tool_calls"].as_array().unwrap().len(), 1);

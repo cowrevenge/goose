@@ -1,4 +1,4 @@
-use crate::agents::{Agent, ExtensionLoadResult};
+use crate::agents::{ExtensionLoadResult, StateMachineServices};
 use crate::config::{Config, GooseMode};
 use crate::providers::inventory::{ProviderInventoryEntry, ProviderInventoryService};
 use crate::session::session_manager::SessionUsageTotals;
@@ -45,6 +45,9 @@ struct SessionMeta<'a> {
     model_id: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     last_message_snippet: Option<&'a str>,
+    /// The loop (/grind) goal while the loop is on.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    grind: Option<String>,
 }
 
 impl<'a> From<&'a Session> for SessionMeta<'a> {
@@ -64,6 +67,7 @@ impl<'a> From<&'a Session> for SessionMeta<'a> {
                 .as_ref()
                 .map(|mc| mc.model_name.as_str()),
             last_message_snippet: session.last_message_snippet.as_deref(),
+            grind: crate::session::extension_data::GoalState::of(session).grind,
         }
     }
 }
@@ -236,10 +240,10 @@ pub(super) fn build_mode_state(
 /// The provider decides whether goose owns the effort menu; a session without a
 /// live provider keeps the model-name based path.
 pub(super) async fn agent_thinking_effort_support(
-    agent: &Agent,
+    services: &StateMachineServices,
     session_id: &str,
 ) -> ThinkingEffortSupport {
-    match agent.provider(session_id).await {
+    match services.provider(session_id).await {
         Ok(provider) => provider.thinking_effort_support(),
         Err(_) => ThinkingEffortSupport::Unspecified,
     }
@@ -561,6 +565,7 @@ mod tests {
                     family: None,
                     context_limit: None,
                     reasoning: None,
+                    reasoning_efforts: None,
                     recommended: false,
                 })
                 .collect(),

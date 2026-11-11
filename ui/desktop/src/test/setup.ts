@@ -45,6 +45,7 @@ Object.assign(navigator, {
 // Mock settings store for tests
 const mockSettings: Record<string, unknown> = {
   showMenuBarIcon: true,
+  closeToTray: true,
   showDockIcon: true,
   enableWakelock: false,
   spellcheckEnabled: true,
@@ -71,6 +72,7 @@ const mockSettings: Record<string, unknown> = {
   responseStyle: 'concise',
   showPricing: true,
   seenAnnouncementIds: [],
+  showThinking: 'collapsed',
 };
 
 // Mock window.electron for renderer process

@@ -34,9 +34,13 @@ export type LanguageSetting =
   | 'system' | 'en' | 'es' | 'fr' | 'de' | 'it' | 'pt' | 'id' | 'ms' | 'vi'
   | 'hi' | 'ja' | 'ko' | 'ru' | 'tr' | 'zh-CN' | 'zh-TW';
 
+export type ShowThinking = 'always' | 'collapsed' | 'never';
+
 export interface Settings {
   // Desktop app settings
   showMenuBarIcon: boolean;
+  /** Closing the last window hides it to the tray instead of quitting (Windows and Linux). */
+  closeToTray: boolean;
   disableAutoDownload: boolean;
   showDockIcon: boolean;
   enableWakelock: boolean;
@@ -55,6 +59,7 @@ export interface Settings {
   showPricing: boolean;
   seenAnnouncementIds: string[];
   recentModels: RecentModel[];
+  showThinking: ShowThinking;
 }
 
 export type SettingKey = keyof Settings;
@@ -76,6 +81,7 @@ export const defaultKeyboardShortcuts: DefaultKeyboardShortcuts = {
 export const defaultSettings: Settings = {
   // Desktop app settings
   showMenuBarIcon: true,
+  closeToTray: true,
   disableAutoDownload: false,
   showDockIcon: true,
   enableWakelock: false,
@@ -96,6 +102,7 @@ export const defaultSettings: Settings = {
   showPricing: true,
   seenAnnouncementIds: [],
   recentModels: [],
+  showThinking: 'collapsed',
 };
 
 export function getKeyboardShortcuts(settings: Settings): KeyboardShortcuts {

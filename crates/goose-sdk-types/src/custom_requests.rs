@@ -268,7 +268,7 @@ pub struct LiveVoiceAvailabilityResponse {
     pub message: String,
 }
 
-/// Get a diagnostic report for a session.
+/// Start a live voice interaction for a session.
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
 #[request(
     method = "_goose/unstable/session/live-voice/start",
@@ -278,6 +278,10 @@ pub struct LiveVoiceAvailabilityResponse {
 pub struct LiveVoiceStartRequest {
     pub session_id: String,
     pub offer_sdp: String,
+    /// Added after goose's live voice instructions, including any configured
+    /// ones, for this interaction only. Blank text adds nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instructions: Option<String>,
     #[serde(default, rename = "_meta", skip_serializing_if = "Option::is_none")]
     pub meta: Option<Meta>,
 }
@@ -323,6 +327,89 @@ pub enum DiagnosticsReportLevel {
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
 pub struct DiagnosticsGetResponse {
     pub report: serde_json::Value,
+}
+
+/// Break down what fills the model's context window if the session were
+/// prompted right now. Makes no model call.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(method = "_goose/unstable/context/report", response = ContextReportResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextReportRequest {
+    pub session_id: String,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextReportResponse {
+    pub model: ContextReportModel,
+    /// Measured with goose's local tokenizer; always the sum of the segments.
+    pub total_tokens: u64,
+    /// Non-overlapping. Prompt and tool segments come in request order; the
+    /// conversation follows grouped by message kind, with each part labelled
+    /// by its position in the request.
+    pub segments: Vec<ContextSegment>,
+    /// The provider keeps its own history and only receives the latest prompt
+    /// (Claude Code, Gemini CLI), so goose assembles no request to break down;
+    /// `segments` is empty and `total_tokens` is zero.
+    pub provider_manages_context: bool,
+    /// The session is past the auto-compaction threshold, so the loop compacts
+    /// the conversation before it sends the next request.
+    pub auto_compaction_pending: bool,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextReportModel {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    pub model_name: String,
+    pub context_limit: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextSegment {
+    pub category: ContextCategory,
+    pub label: String,
+    /// Display-only provenance, such as a file path or a tool count.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    pub token_count: u64,
+    /// Truncated with a trailing `… (+N more chars)` marker. Omitted when
+    /// `parts` carries the previews.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_preview: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parts: Vec<ContextPart>,
+}
+
+/// Parts add up to their segment's `tokenCount`, except where a segment is
+/// split into prose sections; there the headings and framing are carried by
+/// the segment alone.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextPart {
+    pub label: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    pub token_count: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_preview: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextCategory {
+    /// The base prompt, plus the residual row that reconciles the segments
+    /// with the request total.
+    SystemPrompt,
+    ExtensionInstructions,
+    /// Hint files, project instructions and other prompt extras.
+    AdditionalInstructions,
+    TurnContext,
+    ToolDefinitions,
+    CompactionSummary,
+    Messages,
 }
 
 /// Information about a prompt template, including its default content and customization status.
@@ -783,6 +870,43 @@ pub struct UpdateSessionProjectRequest {
 pub struct RenameSessionRequest {
     pub session_id: String,
     pub title: String,
+}
+
+/// Turn a session's loop (the /grind goal) on or off without sending a chat message, so it can
+/// be switched while a turn is running. `goal: null` (or blank) turns it off.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(method = "_goose/unstable/session/grind", response = EmptyResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct SetSessionGrindRequest {
+    pub session_id: String,
+    #[serde(default)]
+    pub goal: Option<String>,
+}
+
+/// The local image models the switcher (StrataTray's control port) offers, and the one in use.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(method = "_goose/unstable/image/models", response = ImageModelsResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageModelsRequest {}
+
+/// Image models response. `error` is set (and the lists empty) when the switcher cannot be asked.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageModelsResponse {
+    #[serde(default)]
+    pub current: Option<String>,
+    #[serde(default)]
+    pub models: Vec<String>,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+/// Put an image model on the local image server (the switcher restarts it when needed).
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(method = "_goose/unstable/image/switch", response = EmptyResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct SwitchImageModelRequest {
+    pub model: String,
 }
 
 /// Archive a session (soft delete).
@@ -1785,6 +1909,10 @@ pub struct ProviderInventoryModelDto {
     /// Whether the model supports reasoning/extended thinking.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<bool>,
+    /// The reasoning_effort words this model's server accepts, when its provider file lists them.
+    /// The thinking picker offers only these levels.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_efforts: Option<Vec<String>>,
     /// Whether this model should appear in the compact recommended picker.
     #[serde(default)]
     pub recommended: bool,

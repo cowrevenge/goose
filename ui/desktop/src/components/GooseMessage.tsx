@@ -5,6 +5,7 @@ import { formatMessageTimestamp } from '../utils/timeUtils';
 import MarkdownContent from './MarkdownContent';
 import ThinkingContent from './ThinkingContent';
 import ToolCallWithResponse from './ToolCallWithResponse';
+import FinalOutputLine, { isFinalOutputToolRequest } from './FinalOutputLine';
 import {
   getTextAndImageContent,
   getThinkingContent,
@@ -38,6 +39,8 @@ interface GooseMessageProps {
   toolConfirmationShownInline: boolean;
   append: (value: string) => void;
   isStreaming: boolean;
+  /** The turn's work section lists this message's thinking instead (see MessageList). */
+  hideThinking?: boolean;
   submitElicitationResponse?: (
     elicitationId: string,
     userData: Record<string, unknown>
@@ -53,6 +56,7 @@ function GooseMessage({
   toolConfirmationShownInline,
   append,
   isStreaming,
+  hideThinking = false,
   submitElicitationResponse,
 }: GooseMessageProps) {
   const contentRef = useRef<HTMLDivElement | null>(null);
@@ -63,7 +67,8 @@ function GooseMessage({
   const { textContent, imagePaths: allImagePaths } = getTextAndImageContent(message);
   const displayText = isOutputTokenLimitFallback ? '' : textContent;
   const imagePaths = isOutputTokenLimitFallback ? [] : allImagePaths;
-  const thinkingContent = isOutputTokenLimitFallback ? null : getThinkingContent(message);
+  const thinkingContent =
+    isOutputTokenLimitFallback || hideThinking ? null : getThinkingContent(message);
 
   const timestamp = useMemo(() => formatMessageTimestamp(message.created), [message.created]);
   const toolRequests = getToolRequests(message);
@@ -101,15 +106,7 @@ function GooseMessage({
       <div className="flex flex-col w-full min-w-0">
         {thinkingContent && (
           <div className="group">
-            <ThinkingContent
-              content={thinkingContent}
-              isExpanded={
-                isStreaming &&
-                !displayText.trim() &&
-                imagePaths.length === 0 &&
-                toolRequests.length === 0
-              }
-            />
+            <ThinkingContent content={thinkingContent} />
             {!displayText.trim() && imagePaths.length === 0 && toolRequests.length === 0 && (
               <div className="relative flex items-center justify-between">
                 <div
@@ -187,18 +184,25 @@ function GooseMessage({
                   );
                   return (
                     <div className="goose-message-tool" key={toolRequest.id}>
-                      <ToolCallWithResponse
-                        sessionId={sessionId}
-                        isCancelledMessage={false}
-                        toolRequest={toolRequest}
-                        toolResponse={toolState.response}
-                        notifications={toolNotifications[toolIndex]}
-                        isStreamingMessage={isStreaming}
-                        isPendingApproval={toolState.isPending}
-                        append={append}
-                        confirmationContent={toolState.confirmation}
-                        isApprovalClicked={isApprovalClicked}
-                      />
+                      {isFinalOutputToolRequest(toolRequest) ? (
+                        <FinalOutputLine
+                          toolResponse={toolState.response}
+                          isStreaming={isStreaming}
+                        />
+                      ) : (
+                        <ToolCallWithResponse
+                          sessionId={sessionId}
+                          isCancelledMessage={false}
+                          toolRequest={toolRequest}
+                          toolResponse={toolState.response}
+                          notifications={toolNotifications[toolIndex]}
+                          isStreamingMessage={isStreaming}
+                          isPendingApproval={toolState.isPending}
+                          append={append}
+                          confirmationContent={toolState.confirmation}
+                          isApprovalClicked={isApprovalClicked}
+                        />
+                      )}
                     </div>
                   );
                 })}

@@ -20,15 +20,6 @@
   "acpReadinessPanel.connectionNotChecked": {
     "defaultMessage": "Check your account connection before continuing."
   },
-  "alertBox.autoCompactAt": {
-    "defaultMessage": "Auto compact at"
-  },
-  "alertBox.compactNow": {
-    "defaultMessage": "Compact now"
-  },
-  "alertBox.failedToSaveThreshold": {
-    "defaultMessage": "Failed to save threshold: {error}"
-  },
   "announcementModal.gotIt": {
     "defaultMessage": "Got it!"
   },
@@ -146,6 +137,12 @@
   "backButton.back": {
     "defaultMessage": "Back"
   },
+  "baseChat.changeFolder": {
+    "defaultMessage": "Change folder"
+  },
+  "baseChat.changeFolderFailed": {
+    "defaultMessage": "Could not move the session to that folder: {error}"
+  },
   "baseChat.failedToLoadSession": {
     "defaultMessage": "Failed to Load Session"
   },
@@ -196,9 +193,6 @@
   },
   "chat.notification.taskComplete.title": {
     "defaultMessage": "Goose finished the task."
-  },
-  "chatInput.contextWindow": {
-    "defaultMessage": "Context window"
   },
   "chatInput.dictationError": {
     "defaultMessage": "Dictation Error"
@@ -340,6 +334,63 @@
   },
   "confirmationModal.processing": {
     "defaultMessage": "Processing..."
+  },
+  "contextWindowIndicator.open": {
+    "defaultMessage": "{used} of {limit} tokens used. Show what is in the context window"
+  },
+  "contextXray.autoCompactionPending": {
+    "defaultMessage": "Past the auto-compaction threshold: the conversation is compacted before the next request is sent."
+  },
+  "contextXray.category.additionalInstructions": {
+    "defaultMessage": "Instructions & hints"
+  },
+  "contextXray.category.compactionSummary": {
+    "defaultMessage": "Compaction summary"
+  },
+  "contextXray.category.extensionInstructions": {
+    "defaultMessage": "Extension instructions"
+  },
+  "contextXray.category.messages": {
+    "defaultMessage": "Conversation"
+  },
+  "contextXray.category.systemPrompt": {
+    "defaultMessage": "System prompt"
+  },
+  "contextXray.category.toolDefinitions": {
+    "defaultMessage": "Tool definitions"
+  },
+  "contextXray.category.turnContext": {
+    "defaultMessage": "Turn context"
+  },
+  "contextXray.compactNow": {
+    "defaultMessage": "Compact now"
+  },
+  "contextXray.free": {
+    "defaultMessage": "Free"
+  },
+  "contextXray.loadError": {
+    "defaultMessage": "Could not load the context report."
+  },
+  "contextXray.modelSummary": {
+    "defaultMessage": "{model} · {limit} token context window"
+  },
+  "contextXray.providerManagesContext": {
+    "defaultMessage": "{provider} keeps its own conversation history and only receives the latest prompt from goose, so there is no request to break down."
+  },
+  "contextXray.refresh": {
+    "defaultMessage": "Refresh"
+  },
+  "contextXray.retry": {
+    "defaultMessage": "Retry"
+  },
+  "contextXray.title": {
+    "defaultMessage": "Context window"
+  },
+  "contextXray.tokenizerNote": {
+    "defaultMessage": "Token counts are estimated with the o200k tokenizer."
+  },
+  "contextXray.usage": {
+    "defaultMessage": "of {limit} tokens · {percent} of the context window"
   },
   "conversationLimitsDropdown.conversationLimits": {
     "defaultMessage": "Conversation Limits"
@@ -1274,6 +1325,18 @@
   "externalBackendSection.workingDirPlaceholder": {
     "defaultMessage": "/home/goose/workspace"
   },
+  "finalOutputLine.notCollected": {
+    "defaultMessage": "Structured result wasn't collected"
+  },
+  "finalOutputLine.rejected": {
+    "defaultMessage": "Structured result was rejected"
+  },
+  "finalOutputLine.returned": {
+    "defaultMessage": "Returned structured result"
+  },
+  "finalOutputLine.returning": {
+    "defaultMessage": "Returning structured result…"
+  },
   "gitBranchIndicator.failedToSwitch": {
     "defaultMessage": "Failed to switch to {branch}"
   },
@@ -1465,6 +1528,27 @@
   },
   "huggingFaceSignInPrompt.title": {
     "defaultMessage": "Hugging Face"
+  },
+  "imageModelPicker.failed": {
+    "defaultMessage": "Could not switch the image model"
+  },
+  "imageModelPicker.image": {
+    "defaultMessage": "Image"
+  },
+  "imageModelPicker.imageModel": {
+    "defaultMessage": "Image model"
+  },
+  "imageModelPicker.noModels": {
+    "defaultMessage": "No image models found"
+  },
+  "imageModelPicker.restartHint": {
+    "defaultMessage": "Switching restarts the model server."
+  },
+  "imageModelPicker.switching": {
+    "defaultMessage": "Switching…"
+  },
+  "imageModelPicker.unavailable": {
+    "defaultMessage": "StrataTray did not answer with image models"
   },
   "imagePreview.altText": {
     "defaultMessage": "goose image"
@@ -1955,6 +2039,33 @@
   "localModelPicker.useModel": {
     "defaultMessage": "Use {modelId}"
   },
+  "loopToggle.failed": {
+    "defaultMessage": "Could not change the loop"
+  },
+  "loopToggle.goal": {
+    "defaultMessage": "Loop goal"
+  },
+  "loopToggle.goalPlaceholder": {
+    "defaultMessage": "What the agent keeps working on until you turn the loop off"
+  },
+  "loopToggle.loop": {
+    "defaultMessage": "Loop"
+  },
+  "loopToggle.off": {
+    "defaultMessage": "Off"
+  },
+  "loopToggle.on": {
+    "defaultMessage": "On"
+  },
+  "loopToggle.start": {
+    "defaultMessage": "Start loop"
+  },
+  "loopToggle.stop": {
+    "defaultMessage": "Stop loop"
+  },
+  "loopToggle.stopHint": {
+    "defaultMessage": "Stops at the end of the current turn."
+  },
   "markdownContent.copyCode": {
     "defaultMessage": "Copy code"
   },
@@ -2021,6 +2132,9 @@
   "messageCopyLink.copy": {
     "defaultMessage": "Copy"
   },
+  "messageList.failedCalls": {
+    "defaultMessage": "{count,plural,one{# failed call} other{# failed calls}}"
+  },
   "messageList.hiddenMessages": {
     "defaultMessage": "{count,plural,one{# message hidden} other{# messages hidden}}"
   },
@@ -2032,6 +2146,12 @@
   },
   "messageList.showAllMessages": {
     "defaultMessage": "Show all"
+  },
+  "messageList.showEverything": {
+    "defaultMessage": "Show everything"
+  },
+  "messageList.showOnlyErrors": {
+    "defaultMessage": "Show only errors"
   },
   "messageQueue.cancel": {
     "defaultMessage": "Cancel"
@@ -2393,6 +2513,27 @@
   "modelsBottomBar.selectModel": {
     "defaultMessage": "Select Model"
   },
+  "modelsBottomBar.thinking": {
+    "defaultMessage": "Thinking"
+  },
+  "modelsBottomBar.thinkingHigh": {
+    "defaultMessage": "High"
+  },
+  "modelsBottomBar.thinkingLow": {
+    "defaultMessage": "Low"
+  },
+  "modelsBottomBar.thinkingMax": {
+    "defaultMessage": "Max"
+  },
+  "modelsBottomBar.thinkingMedium": {
+    "defaultMessage": "Medium"
+  },
+  "modelsBottomBar.thinkingOff": {
+    "defaultMessage": "Off"
+  },
+  "modelsBottomBar.thinkingXHigh": {
+    "defaultMessage": "XHigh"
+  },
   "modelsSection.resetDescription": {
     "defaultMessage": "Clear your selected model and provider settings to start fresh"
   },
@@ -2425,6 +2566,24 @@
   },
   "navigationPanel.chats": {
     "defaultMessage": "Chats"
+  },
+  "navigationPanel.delete.cancel": {
+    "defaultMessage": "Cancel"
+  },
+  "navigationPanel.delete.failed": {
+    "defaultMessage": "Could not delete {name}: {error}"
+  },
+  "navigationPanel.delete.message": {
+    "defaultMessage": "Delete \"{name}\"? This cannot be undone."
+  },
+  "navigationPanel.delete.success": {
+    "defaultMessage": "Chat deleted"
+  },
+  "navigationPanel.delete.title": {
+    "defaultMessage": "Delete chat"
+  },
+  "navigationPanel.deleteChat": {
+    "defaultMessage": "Delete chat"
   },
   "navigationPanel.loadingChats": {
     "defaultMessage": "Loading chats…"
@@ -3765,7 +3924,7 @@
     "defaultMessage": "Use ML models to detect potential prompt injection in your chat"
   },
   "securityToggle.thresholdDescription": {
-    "defaultMessage": "Higher values are more strict (0.01 = very lenient, 1.0 = maximum strict)"
+    "defaultMessage": "Lower values are more strict (0.01 = maximum strict, 1.0 = very lenient)"
   },
   "securityToggle.warpNotice": {
     "defaultMessage": "Command injection detection works best when connected to WARP (required to reach the classification service)."
@@ -3793,6 +3952,9 @@
   },
   "sessionActionsHeader.copyText": {
     "defaultMessage": "Copy text"
+  },
+  "sessionActionsHeader.diagnostics": {
+    "defaultMessage": "Generate diagnostics bundle"
   },
   "sessionActionsHeader.duplicateFailed": {
     "defaultMessage": "Failed to duplicate session: {error}"
@@ -4079,6 +4241,12 @@
   "settings.close": {
     "defaultMessage": "Close"
   },
+  "settings.closeToTray.description": {
+    "defaultMessage": "Closing the window keeps goose running in the tray, including any task in progress. Quit from the tray icon."
+  },
+  "settings.closeToTray.title": {
+    "defaultMessage": "Close to tray"
+  },
   "settings.costTracking.description": {
     "defaultMessage": "Show model pricing and usage costs"
   },
@@ -4279,6 +4447,21 @@
   },
   "shortcutRecorder.save": {
     "defaultMessage": "Save"
+  },
+  "showThinkingSetting.always": {
+    "defaultMessage": "Always"
+  },
+  "showThinkingSetting.collapsed": {
+    "defaultMessage": "Collapsed"
+  },
+  "showThinkingSetting.description": {
+    "defaultMessage": "Show the model's thinking in chat. \"Collapsed\" keeps it closed until you open it."
+  },
+  "showThinkingSetting.never": {
+    "defaultMessage": "Never"
+  },
+  "showThinkingSetting.title": {
+    "defaultMessage": "Show Thinking"
   },
   "skillsView.addSkill": {
     "defaultMessage": "Add Skill"
@@ -4666,6 +4849,102 @@
   },
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "Goose would like to call {toolName}. Allow?"
+  },
+  "turnRun.did.agent": {
+    "defaultMessage": "{count,plural,one{ran a sub-agent} other{ran # sub-agents}}"
+  },
+  "turnRun.did.command": {
+    "defaultMessage": "{count,plural,one{ran a command} other{ran # commands}}"
+  },
+  "turnRun.did.fetch": {
+    "defaultMessage": "{count,plural,one{fetched a page} other{fetched # pages}}"
+  },
+  "turnRun.did.image": {
+    "defaultMessage": "{count,plural,one{generated an image} other{generated # images}}"
+  },
+  "turnRun.did.list": {
+    "defaultMessage": "{count,plural,one{listed a folder} other{listed # folders}}"
+  },
+  "turnRun.did.read": {
+    "defaultMessage": "{count,plural,one{read a file} other{read # files}}"
+  },
+  "turnRun.did.search": {
+    "defaultMessage": "{count,plural,one{searched once} other{searched # times}}"
+  },
+  "turnRun.did.tool": {
+    "defaultMessage": "{count,plural,one{used a tool} other{used # tools}}"
+  },
+  "turnRun.did.write": {
+    "defaultMessage": "{count,plural,one{edited a file} other{edited # files}}"
+  },
+  "turnRun.doing.agent": {
+    "defaultMessage": "Running a sub-agent"
+  },
+  "turnRun.doing.command": {
+    "defaultMessage": "Running a command"
+  },
+  "turnRun.doing.fetch": {
+    "defaultMessage": "Fetching a page"
+  },
+  "turnRun.doing.image": {
+    "defaultMessage": "Generating an image"
+  },
+  "turnRun.doing.list": {
+    "defaultMessage": "Listing a folder"
+  },
+  "turnRun.doing.read": {
+    "defaultMessage": "Reading a file"
+  },
+  "turnRun.doing.search": {
+    "defaultMessage": "Searching"
+  },
+  "turnRun.doing.thinking": {
+    "defaultMessage": "Thinking"
+  },
+  "turnRun.doing.tool": {
+    "defaultMessage": "Using {tool}"
+  },
+  "turnRun.doing.write": {
+    "defaultMessage": "Editing a file"
+  },
+  "turnRun.failed": {
+    "defaultMessage": "{count} failed"
+  },
+  "turnRun.thought": {
+    "defaultMessage": "Thought"
+  },
+  "turnRun.waiting": {
+    "defaultMessage": "Waiting for you"
+  },
+  "turnStep.agent": {
+    "defaultMessage": "Ran a sub-agent"
+  },
+  "turnStep.command": {
+    "defaultMessage": "Ran a command"
+  },
+  "turnStep.fetch": {
+    "defaultMessage": "Fetched a page"
+  },
+  "turnStep.image": {
+    "defaultMessage": "Generated an image"
+  },
+  "turnStep.list": {
+    "defaultMessage": "Listed a folder"
+  },
+  "turnStep.read": {
+    "defaultMessage": "Read a file"
+  },
+  "turnStep.search": {
+    "defaultMessage": "Searched"
+  },
+  "turnStep.thinking": {
+    "defaultMessage": "Thinking"
+  },
+  "turnStep.tool": {
+    "defaultMessage": "Used {tool}"
+  },
+  "turnStep.write": {
+    "defaultMessage": "Edited a file"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "Goose will download the update in the background and install it the next time you quit or restart."

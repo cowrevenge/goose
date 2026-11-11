@@ -1,17 +1,19 @@
 use anyhow::Result;
 
 use self::calculator_extension::{value, ADD};
-use self::pipeline::MessageKind::{Agent, ToolCall};
+use self::pipeline::MessageKind::{Agent, Error, ToolCall};
 use self::pipeline::{test_pipeline, MAX_TURNS};
-use crate::agents::state_machine;
 use crate::agents::state_machine::ops_retry::NUDGED;
 use crate::agents::state_machine::Emitter;
 use crate::session::extension_data::{EnabledExtensionsState, ExtensionData, ExtensionState};
+use goose_agent::max_turns::MAX_TURNS_MESSAGE;
 
+mod advertised_tools;
 mod agent_reply;
 mod calculator_extension;
 mod cancellation;
 mod compaction_lifecycle;
+mod context_relevance;
 mod dummy_api;
 mod hooks_lifecycle;
 mod pipeline;
@@ -53,7 +55,7 @@ async fn capture_state_machine_trace_fields(
         .await?;
 
     let cancel = CancellationToken::new();
-    let machine = pipeline.machine(cancel.clone());
+    let machine = pipeline.machine(cancel.clone()).await;
     let (tx, _rx) = mpsc::unbounded_channel();
     let emit = Emitter::new(tx, cancel);
     let span = tracing::info_span!(
@@ -66,7 +68,7 @@ async fn capture_state_machine_trace_fields(
     super::session::run(
         &machine,
         pipeline.session_manager.as_ref(),
-        &pipeline.hook_manager,
+        &pipeline.services().await.hook_manager,
         &pipeline.session_id,
         &emit,
     )
@@ -194,8 +196,12 @@ async fn max_turns_counts_inference_calls_and_injects_budget() -> Result<()> {
     let first_budgeted_call = MAX_TURNS.div_ceil(2) as usize;
     assert!(!calls[first_budgeted_call - 1].input_contains("<turn-budget>"));
     assert!(calls[first_budgeted_call].input_contains("<turn-budget>"));
-    result.assert_message(-1, Agent, state_machine::MAX_TURNS_MESSAGE);
-    result.assert_emitted_message_matches_persisted(state_machine::MAX_TURNS_MESSAGE);
+    result.assert_message(-1, Error, MAX_TURNS_MESSAGE);
+    result.assert_emitted_message_matches_persisted(MAX_TURNS_MESSAGE);
+    assert_eq!(
+        result.conversation().last().unwrap().error_kind(),
+        Some(crate::conversation::message::MessageErrorKind::ResourceExhausted)
+    );
 
     Ok(())
 }
@@ -212,7 +218,7 @@ async fn auto_effort_is_scoped_to_each_turn_and_reused_across_inferences() -> Re
     use wiremock::matchers::{body_partial_json, header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    use crate::agents::agent::available_auto_efforts;
+    use crate::agents::services::available_auto_efforts;
     use crate::agents::state_machine::AutoEffortOperation;
 
     let (pipeline, api) = test_pipeline().await?;
@@ -333,7 +339,7 @@ async fn auto_effort_is_scoped_to_each_turn_and_reused_across_inferences() -> Re
         )
         .await
         .record_model_configs()
-        .with_operation(Arc::new(AutoEffortOperation::new(
+        .with_auto_effort(Arc::new(AutoEffortOperation::new(
             Arc::new(decision_provider),
             "test-effort-model".to_string(),
             efforts,
@@ -503,7 +509,30 @@ async fn grind_is_bounded_by_max_turns() -> Result<()> {
     let result = pipeline.run(["go"]).await?;
 
     assert_eq!(api.call_count(), MAX_TURNS as usize);
-    result.assert_message(-1, Agent, state_machine::MAX_TURNS_MESSAGE);
+    result.assert_message(-1, Error, MAX_TURNS_MESSAGE);
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn grind_switched_off_mid_turn_stops_at_the_end_of_that_turn() -> Result<()> {
+    // The desktop's loop toggle turns grind off while a turn is running, outside the chat.
+    let (pipeline, api) = test_pipeline().await?;
+    api.on("go").reply("grinding");
+    let held = api.on("never done").hold_reply("still grinding");
+    pipeline.set_grind(Some("never done".to_string())).await;
+
+    let run = pipeline.run(["go"]);
+    let switch_off = async {
+        held.entered().await;
+        pipeline.set_grind(None).await;
+        held.release();
+    };
+    let (result, ()) = tokio::join!(run, switch_off);
+    let result = result?;
+
+    assert_eq!(api.call_count(), 2);
+    result.assert_message(-1, Agent, "still grinding");
 
     Ok(())
 }
@@ -514,6 +543,7 @@ async fn slash_commands_yield_or_fall_through_to_inference() -> Result<()> {
 
     let status = pipeline.run(["/status"]).await?;
     assert_eq!(api.call_count(), 0);
+    status.assert_message(-1, Agent, &format!("Session ID: `{}`", pipeline.session_id));
     status.assert_message(-1, Agent, "Provider:");
     assert!(status
         .conversation()

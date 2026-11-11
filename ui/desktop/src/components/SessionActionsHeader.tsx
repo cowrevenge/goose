@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent }
 import { flushSync } from 'react-dom';
 import {
   Activity,
+  Bug,
   ChevronDown,
   ChevronRight,
   Copy,
@@ -18,6 +19,8 @@ import { getSessionDisplayName } from '../sessions';
 import type { Session } from '../types/session';
 import { errorMessage } from '../utils/conversionUtils';
 import { cn } from '../utils';
+import { trackDiagnosticsOpened } from '../utils/analytics';
+import { DiagnosticsModal } from './ui/Diagnostics';
 import { Button } from './ui/button';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog';
 import {
@@ -47,6 +50,10 @@ const i18n = defineMessages({
   viewModelInteractions: {
     id: 'sessionActionsHeader.viewModelInteractions',
     defaultMessage: 'View recent model interactions',
+  },
+  diagnostics: {
+    id: 'sessionActionsHeader.diagnostics',
+    defaultMessage: 'Generate diagnostics bundle',
   },
   renameTitle: {
     id: 'sessionActionsHeader.renameTitle',
@@ -352,6 +359,7 @@ export default function SessionActionsHeader({
 }: SessionActionsHeaderProps) {
   const intl = useIntl();
   const [isRenameOpen, setIsRenameOpen] = useState(false);
+  const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState(false);
   const [renameValue, setRenameValue] = useState('');
   const [isRenaming, setIsRenaming] = useState(false);
   const [isJsonOpen, setIsJsonOpen] = useState(false);
@@ -585,9 +593,28 @@ export default function SessionActionsHeader({
               )}
               {intl.formatMessage(i18n.viewModelInteractions)}
             </DropdownMenuItem>
+            {session?.id && (
+              <DropdownMenuItem
+                onSelect={() => {
+                  trackDiagnosticsOpened();
+                  setTimeout(() => setIsDiagnosticsOpen(true), 0);
+                }}
+              >
+                <Bug className="size-4" />
+                {intl.formatMessage(i18n.diagnostics)}
+              </DropdownMenuItem>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+
+      {session?.id && isDiagnosticsOpen && (
+        <DiagnosticsModal
+          isOpen={isDiagnosticsOpen}
+          onClose={() => setIsDiagnosticsOpen(false)}
+          sessionId={session.id}
+        />
+      )}
 
       <Dialog open={isRenameOpen} onOpenChange={setIsRenameOpen}>
         <DialogContent className="sm:max-w-md">
