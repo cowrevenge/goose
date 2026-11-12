@@ -17,6 +17,13 @@ Local changes on top of an upstream Goose release, built and installed on Window
   calls. Thinking follows the Show Thinking setting (Settings > Chat): Collapsed keeps it as a step
   inside the rows, Always puts the text in view, Never leaves it out. The rules are in
   `utils/turnGrouping.ts`, the rows in `components/Turn*.tsx`.
+- **Long sessions** (`ui/desktop/src/acp`, `components/settledRowContexts.ts`): what a streamed
+  chunk costs does not grow with the conversation, so the window keeps up with the model in a
+  session that has run for hours. The session store copies the one message a chunk changed (it
+  copied the whole conversation three times per chunk) and lets go of a command's live output once
+  its result is in. The view draws streamed content at most every 50 ms, and the per-row
+  bookkeeping is kept while only text streams in. Loading a long session back no longer walks the
+  whole conversation for every tool result.
 - **`cow/cow-goose.ps1`**: build the desktop app from this checkout and install it over `C:\Goose`.
 
 ## Build and install (Windows)

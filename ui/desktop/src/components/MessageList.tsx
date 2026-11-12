@@ -1,4 +1,4 @@
-import { Fragment, memo, useEffect, useMemo, useState } from 'react';
+import { Fragment, memo, useEffect, useMemo, useRef, useState } from 'react';
 import { isEqual } from 'lodash';
 import { defineMessages, useIntl } from '../i18n';
 import GooseMessage from './GooseMessage';
@@ -28,12 +28,12 @@ import {
 } from '../utils/turnGrouping';
 import { getModelDisplayName } from './settings/models/predefinedModelsUtils';
 import {
-  deriveMessageRowContexts,
   type InferenceModel,
   inferenceModel,
   isModelChange,
   type MessageRowContext,
 } from './messageRowContext';
+import { settleRowContexts, type SettledRowContexts } from './settledRowContexts';
 
 const i18n = defineMessages({
   failedCalls: {
@@ -65,6 +65,9 @@ const emptyAppend = () => {};
 const HEAD_MESSAGE_COUNT = 20;
 const TAIL_MESSAGE_COUNT = 200;
 const MESSAGE_DISPLAY_LIMIT = HEAD_MESSAGE_COUNT + TAIL_MESSAGE_COUNT;
+
+const visibleEntries = (messages: Message[]): DisplayedEntry[] =>
+  messages.flatMap((message, index) => (message.metadata.userVisible ? [{ message, index }] : []));
 
 function getSystemNotification(message: Message): SystemNotificationContent | undefined {
   return getCreditsExhaustedNotification(message) ?? getInlineSystemNotification(message);
@@ -216,13 +219,7 @@ export default function MessageList({
   const showThinking = useShowThinking();
   const thinking: ThinkingMode =
     showThinking === 'never' ? 'hide' : showThinking === 'always' ? 'show' : 'fold';
-  const visibleMessages = useMemo(
-    () =>
-      messages.flatMap((message, index) =>
-        message.metadata.userVisible ? [{ message, index }] : []
-      ),
-    [messages]
-  );
+  const visibleMessages = useMemo(() => visibleEntries(messages), [messages]);
   const hiddenMessageCount = showAllMessages
     ? 0
     : Math.max(0, visibleMessages.length - MESSAGE_DISPLAY_LIMIT);
@@ -262,7 +259,13 @@ export default function MessageList({
     };
   }, [hasHiddenMessages]);
 
-  const rowContexts = useMemo(() => deriveMessageRowContexts(messages), [messages]);
+  // Row contexts say which calls, results and approvals go with a message. A reply's text has
+  // no part in them, so while one streams in they stay as they are: working them out is several
+  // passes over the whole conversation, too much to do per streamed chunk of a long session.
+  const settledRef = useRef<SettledRowContexts | undefined>(undefined);
+  const settled = settleRowContexts(settledRef.current, messages);
+  settledRef.current = settled;
+  const rowContexts = settled.contexts;
   const modelLabel = (model: InferenceModel) =>
     model.confirmed
       ? getModelDisplayName(model.id)
@@ -295,21 +298,28 @@ export default function MessageList({
   };
   const modelChangeIndexes = useMemo(() => {
     const indexes = new Set<number>();
-    messages.forEach((message, index) => {
+    settled.messages.forEach((message, index) => {
       const currentModel = inferenceModel(message);
-      const previousModel = rowContexts[index].previousModel;
+      const previousModel = settled.contexts[index].previousModel;
       if (currentModel && previousModel && isModelChange(previousModel, currentModel)) {
         indexes.add(index);
       }
     });
     return indexes;
-  }, [messages, rowContexts]);
+  }, [settled]);
+
+  // The errors view looks at the whole session, not only the messages the long-chat limit shows.
+  // It shows calls and no text, so it is laid out from the conversation as of the last change to
+  // its calls: a reply streaming in does not lay the whole session out again.
+  const sessionMessages = useMemo(
+    () => (showingErrors ? visibleEntries(settled.messages) : []),
+    [showingErrors, settled]
+  );
 
   // One agent turn spans many messages (assistant messages and tool-result messages). They are
   // laid out as a turn: text in view, each run of tool calls as one row, the answer in full (see
-  // utils/turnGrouping.ts). The errors view looks at the whole session, not only the messages the
-  // long-chat limit shows.
-  const groupedMessages = showingErrors ? visibleMessages : displayedMessages;
+  // utils/turnGrouping.ts).
+  const groupedMessages = showingErrors ? sessionMessages : displayedMessages;
   const groups = useMemo(
     () =>
       groupIntoTurns(groupedMessages, {
