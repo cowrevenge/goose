@@ -34,7 +34,7 @@ export function applyToolCall(state: AdapterState, update: ToolCall): AcpChatSta
       (content) => content.type === 'toolRequest' && content.id === update.toolCallId
     )
   ) {
-    return messagesChange(state);
+    return messagesChange(state, [message]);
   }
 
   const identity = toolIdentity(update);
@@ -54,7 +54,7 @@ export function applyToolCall(state: AdapterState, update: ToolCall): AcpChatSta
     ...(update._meta ? { _meta: update._meta } : {}),
   });
 
-  return messagesChange(state);
+  return messagesChange(state, [message]);
 }
 
 export function applyToolCallUpdate(
@@ -71,7 +71,7 @@ export function applyToolCallUpdate(
 
   if (hasToolResponse(state, update.toolCallId)) {
     state.toolCallStatesById.delete(update.toolCallId);
-    return messagesChange(state);
+    return messagesChange(state, []);
   }
 
   const gooseMeta = getGooseMessageMeta(update);
@@ -94,7 +94,7 @@ export function applyToolCallUpdate(
   });
 
   state.toolCallStatesById.delete(update.toolCallId);
-  return messagesChange(state);
+  return messagesChange(state, [message]);
 }
 
 function updateToolCallState(
@@ -145,11 +145,12 @@ function getOrCreateToolResponseMessageForUpdate(
   gooseMeta: GooseMessageMeta
 ): Message {
   if (gooseMeta.messageId) {
-    const existing = state.messages.find(
-      (message) => message.id === gooseMeta.messageId && message.role === 'user'
-    );
-    if (existing) {
-      return existing;
+    // The results of one step go into one message, the newest: look from the end.
+    for (let index = state.messages.length - 1; index >= 0; index--) {
+      const message = state.messages[index];
+      if (message.id === gooseMeta.messageId && message.role === 'user') {
+        return message;
+      }
     }
   }
 
@@ -165,9 +166,23 @@ function getOrCreateToolResponseMessageForUpdate(
 }
 
 function hasToolResponse(state: AdapterState, toolCallId: string): boolean {
-  return state.messages.some((message) =>
-    message.content.some((content) => content.type === 'toolResponse' && content.id === toolCallId)
-  );
+  // A result comes after its call, so look from the end and stop at the call: every finished
+  // call would otherwise walk the whole conversation, which makes a long session slow to load.
+  for (let index = state.messages.length - 1; index >= 0; index--) {
+    let isCallMessage = false;
+    for (const content of state.messages[index].content) {
+      if (content.type === 'toolResponse' && content.id === toolCallId) {
+        return true;
+      }
+      if (content.type === 'toolRequest' && content.id === toolCallId) {
+        isCallMessage = true;
+      }
+    }
+    if (isCallMessage) {
+      return false;
+    }
+  }
+  return false;
 }
 
 function toolRequestMetadata(

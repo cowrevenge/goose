@@ -17,6 +17,11 @@ import type { AcpPermissionRequest } from './permissionRequestTypes';
 
 export interface AcpChatSessionSnapshot {
   session: Session | undefined;
+  /**
+   * Read only, like `notifications`: a snapshot shares with the ones after it every message
+   * that did not change in between, so nothing is copied per streamed chunk and an unchanged
+   * message can be told by identity.
+   */
   messages: Message[];
   tokenState: TokenState;
   notifications: NotificationEvent[];
@@ -44,6 +49,9 @@ interface StoreEntry extends AcpChatSessionSnapshot {
   // in flight so per-notification reads don't deep-clone the growing message
   // array (see applyAcpSessionNotification / getSnapshot).
   lastSnapshot?: AcpChatSessionSnapshot;
+  // For the `messages` array it names: the adapter message each of them was
+  // copied from (see publishMessages).
+  published?: { messages: Message[]; sources: Message[] };
 }
 
 const initialTokenState: TokenState = {
@@ -470,6 +478,7 @@ function createAcpChatSessionStoreInternal(): AcpChatSessionStoreInternal {
       return entry.lastSnapshot;
     }
     applyChatStateChanges(entry, changes);
+    releaseLiveOutputOfFinishedToolCall(entry, notification);
     return notify(notification.sessionId, entry);
   };
 
@@ -589,6 +598,27 @@ interface AcpChatSessionSnapshotState {
   snapshot: AcpChatSessionSnapshot | undefined;
 }
 
+// A model streams chunks faster than they are worth drawing. Each one is in the store at once;
+// the view takes the latest at this pace (the pace streamed text is drawn at anyway, see
+// useThrottledStreamingText), so what a long reply costs to draw does not go up with how fast
+// the model is. Only what a chunk changes waits: the chat's state, the session, an error or
+// the run changing is drawn at once.
+const STREAMED_CONTENT_DRAW_INTERVAL_MS = 50;
+
+function differOnlyInStreamedContent(
+  drawn: AcpChatSessionSnapshot,
+  next: AcpChatSessionSnapshot
+): boolean {
+  return (
+    drawn.session === next.session &&
+    drawn.chatState === next.chatState &&
+    drawn.sessionLoadError === next.sessionLoadError &&
+    drawn.activePromptAttemptId === next.activePromptAttemptId &&
+    drawn.activeRunId === next.activeRunId &&
+    drawn.pendingCancelPromptAttemptId === next.pendingCancelPromptAttemptId
+  );
+}
+
 export function useAcpChatSessionSnapshot(sessionId: string): AcpChatSessionSnapshot | undefined {
   const [snapshotState, setSnapshotState] = useState<AcpChatSessionSnapshotState>(() => ({
     sessionId,
@@ -596,14 +626,49 @@ export function useAcpChatSessionSnapshot(sessionId: string): AcpChatSessionSnap
   }));
 
   useEffect(() => {
-    setSnapshotState({
-      sessionId,
-      snapshot: acpChatSessionStoreInternal.getSnapshot(sessionId),
+    let drawn = acpChatSessionStoreInternal.getSnapshot(sessionId);
+    let drawnAt = Number.NEGATIVE_INFINITY;
+    let waiting: AcpChatSessionSnapshot | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    setSnapshotState({ sessionId, snapshot: drawn });
+
+    const draw = (snapshot: AcpChatSessionSnapshot) => {
+      if (timer !== undefined) {
+        clearTimeout(timer);
+        timer = undefined;
+      }
+      waiting = undefined;
+      drawn = snapshot;
+      drawnAt = Date.now();
+      setSnapshotState({ sessionId, snapshot });
+    };
+
+    const unsubscribe = acpChatSessionStoreInternal.subscribe(sessionId, (snapshot) => {
+      // Never longer than the interval, whatever the clock does.
+      const wait = Math.min(
+        STREAMED_CONTENT_DRAW_INTERVAL_MS,
+        STREAMED_CONTENT_DRAW_INTERVAL_MS - (Date.now() - drawnAt)
+      );
+      if (wait <= 0 || !drawn || !differOnlyInStreamedContent(drawn, snapshot)) {
+        draw(snapshot);
+        return;
+      }
+
+      waiting = snapshot;
+      timer ??= setTimeout(() => {
+        timer = undefined;
+        if (waiting) {
+          draw(waiting);
+        }
+      }, wait);
     });
 
-    return acpChatSessionStoreInternal.subscribe(sessionId, (snapshot) => {
-      setSnapshotState({ sessionId, snapshot });
-    });
+    return () => {
+      unsubscribe();
+      if (timer !== undefined) {
+        clearTimeout(timer);
+      }
+    };
   }, [sessionId]);
 
   if (snapshotState.sessionId !== sessionId) {
@@ -652,7 +717,7 @@ function applyChatStateChanges(entry: StoreEntry, changes: AcpChatStateChange[])
   for (const change of changes) {
     switch (change.type) {
       case 'messages':
-        entry.messages = cloneMessages(change.messages);
+        publishMessages(entry, change.messages, change.touched);
         retainPendingLocalSteerMessageIds(entry);
         break;
       case 'tokenState':
@@ -678,6 +743,80 @@ function applyChatStateChanges(entry: StoreEntry, changes: AcpChatStateChange[])
         entry.notifications = [...entry.notifications, change.notification];
         break;
     }
+  }
+}
+
+/**
+ * Publishes the adapter's messages as the entry's: a copy of each, which nothing changes
+ * afterwards. A message the adapter did not touch keeps the copy it already has. So a streamed
+ * chunk costs the copy of one message, not of the conversation (which, done per chunk, is what
+ * stops a long session's window from keeping up with the model), and whoever reads a snapshot
+ * can tell an unchanged message by identity.
+ */
+function publishMessages(
+  entry: StoreEntry,
+  live: Message[],
+  touched: readonly Message[] | undefined
+): void {
+  const previous = entry.messages;
+  // The copies can be kept only when it is known what was touched, and for the array they were
+  // made for: anything else that sets entry.messages starts over.
+  const published =
+    touched !== undefined && entry.published?.messages === previous ? entry.published : undefined;
+  const sources = published ? published.sources : [];
+  const next = published ? previous.slice(0, live.length) : [];
+  let changed = live.length !== previous.length;
+
+  for (let index = 0; index < live.length; index++) {
+    const message = live[index];
+    if (sources[index] !== message) {
+      // New, or put in place of another.
+      next[index] = cloneMessage(message);
+      sources[index] = message;
+      changed = true;
+    }
+  }
+  sources.length = live.length;
+
+  for (const message of touched ?? []) {
+    // What is touched is at or near the end.
+    const index = live.lastIndexOf(message);
+    if (index !== -1) {
+      next[index] = cloneMessage(message);
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    entry.messages = next;
+  }
+  entry.published = { messages: entry.messages, sources };
+}
+
+/**
+ * A running command's live output is only shown until its result is in (the result has the
+ * output). Kept after that, an agent that runs for hours holds on to every line every command
+ * printed until its next prompt.
+ */
+function releaseLiveOutputOfFinishedToolCall(
+  entry: StoreEntry,
+  notification: SessionNotification
+): void {
+  const update = notification.update;
+  if (
+    update.sessionUpdate !== 'tool_call_update' ||
+    (update.status !== 'completed' && update.status !== 'failed')
+  ) {
+    return;
+  }
+
+  const kept = entry.notifications.filter(
+    (event) =>
+      event.request_id !== update.toolCallId ||
+      (event.message as { method?: string }).method !== 'goose/live_output'
+  );
+  if (kept.length !== entry.notifications.length) {
+    entry.notifications = kept;
   }
 }
 
@@ -766,11 +905,13 @@ function confirmedLocalSteerTextByMessageId(entry: StoreEntry): Map<string, stri
 }
 
 function snapshotFromEntry(entry: StoreEntry): AcpChatSessionSnapshot {
+  // The entry's messages and notifications are never changed in place, only
+  // replaced (a message by publishMessages), so a snapshot can share them.
   return {
     session: entry.session,
-    messages: cloneMessages(entry.messages),
+    messages: entry.messages,
     tokenState: { ...entry.tokenState },
-    notifications: [...entry.notifications],
+    notifications: entry.notifications,
     progressMessage: entry.progressMessage,
     chatState: entry.chatState,
     sessionLoadError: entry.sessionLoadError,

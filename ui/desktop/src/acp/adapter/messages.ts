@@ -82,7 +82,7 @@ export function applyContentChunk(
     state.messages.push(message);
   }
 
-  return messagesChange(state);
+  return messagesChange(state, []);
 }
 
 export function applyThoughtChunk(
@@ -121,7 +121,7 @@ export function applyThoughtChunk(
     message.content.push({ type: 'thinking', thinking: update.content.text, signature: '' });
   }
 
-  return messagesChange(state);
+  return messagesChange(state, [message]);
 }
 
 function messageContentFromAcpContentBlock(
@@ -158,11 +158,13 @@ export function findMessageForChunk(
     return lastMergeableMessageWithRole(state, role);
   }
 
-  const existing = state.messages.find(
-    (message) => message.id === messageId && message.role === role
-  );
-  if (existing) {
-    return existing;
+  // A chunk belongs to one of the newest messages, so look from the end: a long conversation
+  // is then not walked for every streamed chunk. An id is on one message only.
+  for (let index = state.messages.length - 1; index >= 0; index--) {
+    const message = state.messages[index];
+    if (message.id === messageId && message.role === role) {
+      return message;
+    }
   }
 
   const pending = lastMergeableMessageWithRole(state, role);
@@ -201,7 +203,7 @@ function messagesChangeWithLocalSteerConfirmation(
   message: Message,
   isSteerChunk: boolean | undefined
 ): AcpChatStateChange[] {
-  const changes = messagesChange(state);
+  const changes = messagesChange(state, [message]);
   if (isSteerChunk && message.metadata.steer && message.role === 'user' && message.id) {
     changes.push({ type: 'localSteerConfirmed', messageId: message.id });
   }

@@ -14,7 +14,7 @@ export function applyElicitationRequest(
   request: AcpElicitationRequest
 ): AcpChatStateChange[] {
   if (hasExistingElicitation(state, request.id)) {
-    return messagesChange(state);
+    return messagesChange(state, []);
   }
 
   state.messages.push({
@@ -35,7 +35,7 @@ export function applyElicitationRequest(
     metadata: { ...DEFAULT_VISIBLE_MESSAGE_METADATA },
   });
 
-  return messagesChange(state);
+  return messagesChange(state, []);
 }
 
 export function applyElicitationStatus(
@@ -74,7 +74,7 @@ export function applyElicitationStatus(
     return messageChanged ? { ...message, content } : message;
   });
 
-  return changed ? messagesChange(state) : [];
+  return changed ? messagesChange(state, []) : [];
 }
 
 function hasExistingElicitation(state: AdapterState, elicitationId: string): boolean {

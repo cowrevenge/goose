@@ -73,8 +73,10 @@ export function useChatSession({
   const snapshotRef = useRef(acpSnapshot);
   snapshotRef.current = acpSnapshot;
 
+  // The store first: what is drawn can be a streamed chunk or two behind it (see
+  // useAcpChatSessionSnapshot), and a list of messages built from that would drop them.
   const getCurrentSnapshot = useCallback(
-    () => snapshotRef.current ?? acpChatSessionStore.getSnapshot(sessionId),
+    () => acpChatSessionStore.getSnapshot(sessionId) ?? snapshotRef.current,
     [sessionId]
   );
 

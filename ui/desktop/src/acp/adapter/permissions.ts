@@ -40,7 +40,7 @@ export function applyPermissionRequest(
     metadata: { ...DEFAULT_VISIBLE_MESSAGE_METADATA },
   });
 
-  return messagesChange(state);
+  return messagesChange(state, []);
 }
 
 export function cancelPermissionRequest(
@@ -49,7 +49,7 @@ export function cancelPermissionRequest(
   generation: string
 ): AcpChatStateChange[] {
   return removePermissionRequestFromState(state, toolCallId, generation)
-    ? messagesChange(state)
+    ? messagesChange(state, [])
     : [];
 }
 

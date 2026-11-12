@@ -60,7 +60,7 @@ function applyStatusMessage(
     },
   });
 
-  return messagesChange(state);
+  return messagesChange(state, []);
 }
 
 function applyMessageUsage(
@@ -103,5 +103,5 @@ function applyMessageUsage(
   };
 
   target.metadata = { ...target.metadata, usage };
-  return messagesChange(state);
+  return messagesChange(state, [target]);
 }

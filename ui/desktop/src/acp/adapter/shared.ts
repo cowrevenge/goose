@@ -3,7 +3,16 @@ import type { TokenState } from '../../types/chat';
 import type { InferenceMetadata, Message, NotificationEvent } from '../../types/message';
 
 export type AcpChatStateChange =
-  | { type: 'messages'; messages: Message[] }
+  | {
+      type: 'messages';
+      messages: Message[];
+      /**
+       * The messages that were changed in place since the last change. Absent when that is not
+       * known, and then any of them may have been. A message that was added, or put in place of
+       * another as a new object, need not be listed: the list itself shows that.
+       */
+      touched?: readonly Message[];
+    }
   | { type: 'tokenState'; tokenState: Partial<TokenState> }
   | { type: 'progressMessage'; message: string | undefined }
   | {
@@ -43,12 +52,20 @@ export const DEFAULT_VISIBLE_MESSAGE_METADATA: Message['metadata'] = {
   agentVisible: true,
 };
 
-export function messagesChange(state: AdapterState): AcpChatStateChange[] {
+export function messagesChange(
+  state: AdapterState,
+  touched?: readonly Message[]
+): AcpChatStateChange[] {
   // Pass the live array by reference: the store is the only consumer and it
   // clones on write (applyChatStateChanges). Cloning here as well made every
   // streamed chunk O(messages) twice, which turns session-load replay into
   // O(n^2) on large sessions.
-  return [{ type: 'messages', messages: state.messages }];
+  //
+  // `touched` says which messages were changed in place, so the store copies
+  // those and keeps the copies it has of the rest: a streamed chunk then costs
+  // one message, however long the conversation is. Leave it out when that is
+  // not known and the store copies them all.
+  return [{ type: 'messages', messages: state.messages, ...(touched ? { touched } : {}) }];
 }
 
 export function cloneMessage(message: Message): Message {
